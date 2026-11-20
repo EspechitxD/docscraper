@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
+import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, nextStep, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
 
 type Tab = "process" | "review" | "structure" | "export" | "browser";
@@ -93,13 +93,13 @@ export function DocumentScreen() {
           <p>
             {doc ? (
               <>
-                {stateLabel(doc.state)} · {doc.language || "idioma não detectado"} · {doc.page_count || 0} páginas
-                {doc.project_id && <> · <Link to={`/projects/${doc.project_id}`}>projeto</Link></>}
+                {nextStep(doc.state)}
+                {doc.project_id && <> · <Link to={`/projects/${doc.project_id}`}>voltar ao projeto</Link></>}
               </>
             ) : "Carregando"}
           </p>
         </div>
-        {doc && <Progress value={doc.progress} />}
+        {doc && <Progress value={doc.state === "awaiting_review" || doc.state === "completed" ? 100 : doc.progress} waiting={isActiveState(doc.state) && doc.state !== "paused"} />}
       </div>
       {error && <Notice kind="error">{error}</Notice>}
       {doc?.error_message && <Notice kind="error">{doc.error_message}</Notice>}
@@ -145,7 +145,7 @@ export function DocumentScreen() {
             </div>
           )}
           <div className="row">
-            <Button onClick={() => void startJob(false)}>Processar</Button>
+            <Button onClick={() => void startJob(false)}>{doc.state === "draft" || doc.state === "failed" ? "Extrair" : "Continuar"}</Button>
             <Button kind="secondary" onClick={() => void startJob(true)}>Recapturar</Button>
             {latest && isActiveState(latest.state) && latest.state !== "paused" && (
               <Button kind="secondary" onClick={() => api(`/jobs/${latest.id}/pause`, { method: "POST" }).then(load)}>Pausar</Button>

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, isApiError } from "../api";
-import { Notice } from "../components/ui";
-import { formatWhen, stateLabel } from "../labels";
+import { Notice, Progress } from "../components/ui";
+import { isActiveState, nextStep } from "../labels";
 import type { Dashboard } from "../types";
 
 type Diagnostics = {
@@ -65,13 +65,15 @@ export function HomeScreen() {
           {!data?.recent.length && <div className="empty">Nenhum documento registrado.</div>}
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Título</th><th>Estado</th><th>Inclusão</th></tr></thead>
+              <thead><tr><th>Documento</th><th>Andamento</th></tr></thead>
               <tbody>
                 {data?.recent.map((item) => (
                   <tr key={item.id}>
                     <td><Link to={`/documents/${item.id}`}>{item.title || item.url || item.id}</Link></td>
-                    <td>{stateLabel(item.state)}</td>
-                    <td>{formatWhen(item.added_at)} <span className="badge">Brasília</span></td>
+                    <td>
+                      <div>{nextStep(item.state)}</div>
+                      <Progress value={item.state === "awaiting_review" || item.state === "completed" ? 100 : item.progress} waiting={isActiveState(item.state) && item.state !== "paused"} />
+                    </td>
                   </tr>
                 ))}
               </tbody>

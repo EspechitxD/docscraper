@@ -31,11 +31,22 @@ export function Notice({ kind = "info", children }: { kind?: "info" | "error" | 
   return <div className={`notice ${kind === "info" ? "" : kind}`}>{children}</div>;
 }
 
-export function Progress({ value }: { value: number }) {
-  const width = Math.max(0, Math.min(100, value || 0));
+export function Progress({ value, waiting = false }: { value: number; waiting?: boolean }) {
+  const width = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+  const unknown = waiting && width <= 0;
   return (
-    <div className="progress" aria-valuenow={width} aria-valuemin={0} aria-valuemax={100} role="progressbar">
-      <span style={{ width: `${width}%` }} />
+    <div className="progress-line">
+      <div
+        className={`progress ${unknown ? "waiting" : ""}`}
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={unknown ? undefined : width}
+        aria-busy={waiting}
+      >
+        <span style={unknown ? undefined : { width: `${width}%` }} />
+      </div>
+      <span className="progress-label">{unknown ? "aguardando" : `${Math.round(width)}%`}</span>
     </div>
   );
 }

@@ -94,6 +94,18 @@ export function stateLabel(value: string): string {
   return STATES[value] || value || "—";
 }
 
+export function nextStep(state: string): string {
+  if (state === "draft") return "Ainda não extraído. Clique em Extrair.";
+  if (state === "queued") return "Na fila. A extração começa em seguida.";
+  if (state === "paused") return "Pausado. Abra o documento para ver o motivo.";
+  if (state === "failed") return "A extração não concluiu. Clique em Extrair de novo.";
+  if (state === "awaiting_review" || state === "completed") return "Extraído. Pergunte em Knowledge AI.";
+  if (state === "inconclusive") return "Extraído em parte. Confira antes de perguntar.";
+  if (state === "cancelled") return "Cancelado.";
+  if (isActiveState(state)) return `${stateLabel(state)}. A barra mostra o andamento.`;
+  return stateLabel(state);
+}
+
 export function categoryLabel(value: string): string {
   return CATEGORIES.find((item) => item.id === value)?.label || value;
 }

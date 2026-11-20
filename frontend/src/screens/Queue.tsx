@@ -60,7 +60,7 @@ export function QueueScreen() {
                   </td>
                   <td><Link to={`/documents/${job.document_id}`}>{job.document_id.slice(0, 8)}</Link><div className="mono">{job.error}</div></td>
                   <td>{stateLabel(job.state)} <span className="badge">{stateLabel(job.stage)}</span></td>
-                  <td><Progress value={job.progress} /></td>
+                  <td><Progress value={job.progress} waiting={isActiveState(job.state) && job.state !== "paused"} /></td>
                   <td>{job.attempts}</td>
                   <td>{formatWhen(job.started_at || job.created_at)}</td>
                   <td className="row">

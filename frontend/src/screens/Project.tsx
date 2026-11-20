@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, isApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { formatWhen, isActiveState, stateLabel } from "../labels";
+import { isActiveState, nextStep, stateLabel } from "../labels";
 import type { DocumentItem, Project } from "../types";
 
 type GlossaryRow = { id: string; name: string };
@@ -215,21 +215,26 @@ export function ProjectScreen() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Título</th><th>Origem</th><th>Idioma</th><th>Páginas</th><th>Progresso</th><th>Estado</th><th>Inclusão</th><th></th></tr>
+              <tr><th>Documento</th><th>Andamento</th><th></th></tr>
             </thead>
             <tbody>
               {documents.map((item) => (
                 <tr key={item.id}>
-                  <td><Link to={`/documents/${item.id}`}>{item.title || item.url || "Documento"}</Link>{item.error_message && <div className="badge bad">{item.error_message}</div>}</td>
-                  <td className="mono">{item.domain || item.origin}</td>
-                  <td>{item.language || "—"}</td>
-                  <td>{item.page_count || item.page_count_estimate || "—"}</td>
-                  <td><Progress value={item.progress} /></td>
-                  <td>{stateLabel(item.state)}</td>
-                  <td>{formatWhen(item.added_at)}</td>
+                  <td>
+                    <Link to={`/documents/${item.id}`}>{item.title || item.url || "Documento"}</Link>
+                    <div className="mono">{item.url || item.domain || item.origin}</div>
+                    {item.error_message && <div className="badge bad">{item.error_message}</div>}
+                  </td>
+                  <td>
+                    <div>{nextStep(item.state)}</div>
+                    <Progress value={item.state === "awaiting_review" || item.state === "completed" ? 100 : item.progress} waiting={isActiveState(item.state) && item.state !== "paused"} />
+                  </td>
                   <td className="row">
                     {(item.state === "draft" || item.state === "failed") && (
                       <Button kind="ghost" onClick={() => void extract(item.id).then(load).catch((cause) => setError(isApiError(cause) ? cause.message : "A extração não começou."))}>Extrair</Button>
+                    )}
+                    {(item.state === "awaiting_review" || item.state === "completed" || item.state === "inconclusive") && (
+                      <Link className="btn secondary" to="/knowledge">Perguntar</Link>
                     )}
                     <Button kind="ghost" onClick={() => setEditing(item)}>Editar</Button>
                     <Button kind="ghost" onClick={() => api(`/documents/${item.id}`, { method: "DELETE" }).then(load)}>Remover</Button>
