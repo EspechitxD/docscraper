@@ -5,6 +5,7 @@ const LINKS = [
   ["/projects", "Projetos"],
   ["/queue", "Fila"],
   ["/glossary", "Glossário"],
+  ["/knowledge", "Knowledge AI"],
   ["/settings", "Configurações"],
   ["/diagnostics", "Diagnóstico"],
   ["/about", "Sobre"],

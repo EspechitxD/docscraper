@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
 import { CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
@@ -9,9 +9,10 @@ type Tab = "process" | "review" | "structure" | "export" | "browser";
 
 export function DocumentScreen() {
   const { documentId = "" } = useParams();
+  const [params] = useSearchParams();
   const [doc, setDoc] = useState<DocumentItem | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [tab, setTab] = useState<Tab>("process");
+  const [tab, setTab] = useState<Tab>(params.get("page") ? "review" : "process");
   const [error, setError] = useState("");
   const [translateMode, setTranslateMode] = useState("none");
   const [consent, setConsent] = useState(false);
@@ -188,6 +189,8 @@ export function DocumentScreen() {
 }
 
 function ReviewPane({ documentId, chosen, onChosen }: { documentId: string; chosen: string[]; onChosen: (ids: string[]) => void }) {
+  const [params] = useSearchParams();
+  const requestedPage = Number(params.get("page") || 0);
   const [pages, setPages] = useState<PageItem[]>([]);
   const [pageId, setPageId] = useState("");
   const [regions, setRegions] = useState<Region[]>([]);
@@ -205,7 +208,11 @@ function ReviewPane({ documentId, chosen, onChosen }: { documentId: string; chos
   async function loadPages() {
     const rows = await api<PageItem[]>(`/documents/${documentId}/pages`);
     setPages(rows);
-    setPageId((current) => current || rows[0]?.id || "");
+    setPageId((current) => {
+      if (current) return current;
+      const match = rows.find((page) => page.sequence === requestedPage);
+      return match?.id || rows[0]?.id || "";
+    });
   }
 
   useEffect(() => {

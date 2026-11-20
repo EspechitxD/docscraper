@@ -8,6 +8,7 @@ import { DiagnosticsScreen } from "./screens/Diagnostics";
 import { DocumentScreen } from "./screens/Document";
 import { GlossaryScreen } from "./screens/Glossary";
 import { HomeScreen } from "./screens/Home";
+import { KnowledgeScreen } from "./screens/Knowledge";
 import { ProjectScreen } from "./screens/Project";
 import { ProjectsScreen } from "./screens/Projects";
 import { QueueScreen } from "./screens/Queue";
@@ -58,6 +59,7 @@ export function App() {
         <Route path="documents/:documentId" element={<DocumentScreen />} />
         <Route path="queue" element={<QueueScreen />} />
         <Route path="glossary" element={<GlossaryScreen />} />
+        <Route path="knowledge" element={<KnowledgeScreen />} />
         <Route path="settings" element={<SettingsScreen />} />
         <Route path="diagnostics" element={<DiagnosticsScreen />} />
         <Route path="about" element={<AboutScreen />} />
