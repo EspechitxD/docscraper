@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
 import shutil
+from html.parser import HTMLParser
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import time
 
-from cpmh_backend.access import classify
+from cpmh_backend.access import classify, signals_from_html
 from cpmh_backend.hashing import dhash, looks_blank, looks_partial, sha256_file
 from cpmh_backend.intelligence import Block, PageObservation, WordBox, decide_capture
 from cpmh_backend.security import validate_url
+
+logger = logging.getLogger("cpmh")
 
 _SIGNALS = """
 () => {
@@ -95,6 +99,18 @@ _DOM = """
 """
 
 
+def _allow_route(route, allow_local: bool) -> None:
+    try:
+        request = getattr(route, "request", None)
+        validate_url(getattr(request, "url", "") or "", allow_local=allow_local)
+        route.continue_()
+    except Exception:
+        try:
+            route.abort()
+        except Exception:
+            return
+
+
 def browser_snapshot(value) -> dict | None:
     """O navegador às vezes devolve nulo em vez do objeto da página."""
     return value if isinstance(value, dict) else None
@@ -123,13 +139,35 @@ def capture_html(
     status_info = browser_status()
     if not status_info["playwright"] or not status_info["chrome"]:
         raise RuntimeError("Chromium ou Playwright não está disponível para a captura HTML.")
-    from playwright.sync_api import Error as PlaywrightError
-    from playwright.sync_api import TimeoutError as PlaywrightTimeout
-    from playwright.sync_api import sync_playwright
 
     out_dir.mkdir(parents=True, exist_ok=True)
     observations: list[PageObservation] = []
     pages: list[dict] = []
+    try:
+        return _capture_with_browser(
+            validated.url,
+            out_dir,
+            allow_local=allow_local,
+            max_pages=max_pages,
+            timeout=timeout,
+            observations=observations,
+            pages=pages,
+        )
+    except Exception as exc:
+        logger.exception("captura html")
+        return {
+            "status": "browser_failed",
+            "pages": pages,
+            "final_url": validated.url,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, observations, pages) -> dict:
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import sync_playwright
+
     capture_status = "inconclusive"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel="chrome", headless=True)
@@ -137,24 +175,16 @@ def capture_html(
             context = browser.new_context(viewport={"width": 1280, "height": 1600}, device_scale_factor=1)
             page = context.new_page()
 
-            def guard(route):
-                try:
-                    validate_url(route.request.url, allow_local=allow_local)
-                except Exception:
-                    route.abort()
-                    return
-                route.continue_()
-
-            page.route("**/*", guard)
+            page.route("**/*", lambda route: _allow_route(route, allow_local))
             started = time.perf_counter()
             try:
-                response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+                response = page.goto(url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
             except PlaywrightTimeout:
-                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "network"})
-                return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
+                verdict = classify({"url": url, "final_url": url, "navigation_error": "network"})
+                return {"status": "blocked", "pages": [], "final_url": url, "access": verdict}
             except PlaywrightError:
-                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "browser"})
-                return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
+                verdict = classify({"url": url, "final_url": url, "navigation_error": "browser"})
+                return {"status": "blocked", "pages": [], "final_url": url, "access": verdict}
             try:
                 page.wait_for_load_state("networkidle", timeout=min(3000, int(timeout * 1000)))
             except PlaywrightTimeout:
@@ -162,11 +192,11 @@ def capture_html(
             page.wait_for_timeout(250)
             observed = browser_snapshot(page.evaluate(_SIGNALS))
             if observed is None:
-                verdict = classify({"url": validated.url, "final_url": page.url, "navigation_error": "browser"})
+                verdict = classify({"url": url, "final_url": page.url, "navigation_error": "browser"})
                 return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
             verdict = classify(
                 {
-                    "url": validated.url,
+                    "url": url,
                     "final_url": page.url,
                     "status": response.status if response is not None else 0,
                     "title": observed.get("title") or "",
@@ -189,7 +219,8 @@ def capture_html(
                 image = Image.open(png)
                 digest = sha256_file(png)
                 perceptual = dhash(image)
-                counter = info.get("counter") or [None, None]
+                raw_counter = info.get("counter")
+                counter = list(raw_counter) if isinstance(raw_counter, (list, tuple)) and len(raw_counter) >= 2 else [None, None]
                 observation = PageObservation(
                     content_hash=digest,
                     phash=perceptual,
@@ -242,7 +273,7 @@ def capture_html(
         if len(pages) > 1 and pages[-1]["sha256"] == pages[-2]["sha256"]:
             Path(pages[-1]["path"]).unlink(missing_ok=True)
             pages.pop()
-    return {"status": capture_status, "pages": pages, "final_url": validated.url}
+    return {"status": capture_status, "pages": pages, "final_url": url}
 
 
 def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
@@ -260,15 +291,7 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
         try:
             page = browser.new_context(viewport={"width": 1280, "height": 1600}).new_page()
 
-            def guard(route):
-                try:
-                    validate_url(route.request.url, allow_local=allow_local)
-                except Exception:
-                    route.abort()
-                    return
-                route.continue_()
-
-            page.route("**/*", guard)
+            page.route("**/*", lambda route: _allow_route(route, allow_local))
             try:
                 response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
             except PlaywrightTimeout:
@@ -299,6 +322,110 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             )
         finally:
             browser.close()
+
+
+class _VisibleHtml(HTMLParser):
+    _SKIP = {"script", "style", "noscript", "template", "svg"}
+    _BREAK = {"p", "div", "h1", "h2", "h3", "h4", "li", "tr", "section", "article", "blockquote", "figcaption", "pre", "br"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[tuple[str, str]] = []
+        self._skip = 0
+        self._buffer: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        name = tag.lower()
+        if name in self._SKIP:
+            self._skip += 1
+        if name == "br":
+            self._flush("p")
+
+    def handle_endtag(self, tag):
+        name = tag.lower()
+        if name in self._SKIP and self._skip:
+            self._skip -= 1
+            return
+        if name in self._BREAK:
+            self._flush(name)
+
+    def handle_data(self, data):
+        if self._skip or not data:
+            return
+        self._buffer.append(data)
+
+    def close(self):
+        super().close()
+        self._flush("p")
+
+    def _flush(self, tag: str) -> None:
+        text = " ".join("".join(self._buffer).split())
+        self._buffer = []
+        if text:
+            self.parts.append((tag, text[:500]))
+
+
+def pages_from_downloaded_html(html: str, url: str, out_dir: Path) -> dict:
+    """Extrai o texto do HTML já baixado quando o navegador não devolve a página."""
+    verdict = classify(signals_from_html(url, url, 200, html or ""))
+    if verdict.get("state") != "ACCESS_GRANTED":
+        return {"status": "blocked", "pages": [], "access": verdict, "final_url": url}
+    parser = _VisibleHtml()
+    parser.feed(html or "")
+    parser.close()
+    parts = parser.parts[:180]
+    if not parts:
+        return {"status": "empty", "pages": [], "final_url": url}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    width = 1100
+    line = 26
+    height = 48 + line * len(parts)
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    categories = {"h1": "title", "h2": "subtitle", "h3": "subtitle", "h4": "subtitle"}
+    blocks: list[Block] = []
+    top = 24
+    for tag, text in parts:
+        draw.text((36, top), text[:170], fill=(20, 20, 20))
+        x = 36 / width
+        y = top / height
+        box_w = 0.9
+        box_h = 18 / height
+        blocks.append(
+            Block(
+                text=text,
+                bbox=(x, y, box_w, box_h),
+                confidence=90.0,
+                source="html_text",
+                font_size=box_h,
+                category=categories.get(tag, "paragraph"),
+                level=1 if tag == "h1" else (2 if tag in {"h2", "h3", "h4"} else 0),
+                words=[WordBox(part, (x, y, box_w, box_h), 90.0) for part in text.split()],
+            )
+        )
+        top += line
+    path = out_dir / "capture-0001.png"
+    image.save(path, format="PNG")
+    return {
+        "status": "complete",
+        "pages": [
+            {
+                "sequence": 1,
+                "path": str(path),
+                "width": width,
+                "height": height,
+                "title": next((text for tag, text in parts if tag == "h1"), ""),
+                "blocks": blocks,
+                "blank": False,
+                "partial": False,
+                "reported_number": "",
+                "source_url": url,
+                "source": "html_text",
+            }
+        ],
+        "final_url": url,
+        "source": "html_text",
+    }
 
 
 def _blocks_from_dom(dom: dict | None, image_size: tuple[int, int]) -> list[Block]:

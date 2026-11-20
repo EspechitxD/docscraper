@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -92,7 +93,7 @@ def run_job(job_id: str) -> None:
             logger.warning("job %s falhou: %s", job_id, job.error)
         except Exception as exc:
             job.state = "failed"
-            job.error = f"{type(exc).__name__}: {exc}"[:500]
+            job.error = _failure_text(exc)
             job.finished_at = utcnow()
             job.started_at = job.started_at or job.finished_at
             job.attempts = job.attempts or 1
@@ -169,28 +170,13 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     if keep_review:
         _step(session, job, "ocr", "skipped", "Revisão existente preservada. A captura não foi refeita.")
     elif document.source_kind == "pdf":
-        _persist_pdf(session, job, document, Path(local), languages, folder)
+        try:
+            _persist_pdf(session, job, document, Path(local), languages, folder)
+        except Exception as exc:
+            if not _recover_html(session, job, document, folder, languages, exc):
+                raise
     elif document.source_kind == "html":
-        from cpmh_backend.services.capture import capture_html
-
-        captured = capture_html(
-            document.normalized_url or document.url,
-            folder / "pages",
-            allow_local=allow_local,
-            max_pages=max_pages,
-            timeout=timeout,
-        )
-        if not isinstance(captured, dict):
-            raise AppError("A captura da página não devolveu um resultado utilizável.")
-        if captured.get("status") == "blocked":
-            access = captured.get("access") if isinstance(captured.get("access"), dict) else {}
-            remember(session, job, document, access, source="capture")
-            _step(session, job, "capturing", "paused", str(access.get("message") or "A captura foi pausada.")[:500])
-            return
-        document.capture_status = captured.get("status") or "inconclusive"
-        _persist_rendered_pages(session, job, document, captured.get("pages") or [], languages, folder)
-        if captured.get("status") != "complete":
-            document.state = "inconclusive"
+        _capture_page(session, job, document, folder, languages, allow_local, max_pages, timeout)
     else:
         _persist_rendered_pages(
             session,
@@ -285,6 +271,7 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
         raise
     if result.kind == "html":
         text = result.data.decode("utf-8", errors="replace")
+        (folder / "original" / "source.html").write_bytes(result.data)
         declared = declared_pdf(text, result.final_url)
         if declared:
             try:
@@ -328,6 +315,90 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
         document.local_path = ""
         return document.normalized_url or document.url
     raise AppError("O endereço não devolveu um PDF, uma imagem ou uma página HTML utilizável.")
+
+
+def _failure_text(exc: BaseException) -> str:
+    frames = traceback.extract_tb(exc.__traceback__)
+    own = [frame for frame in frames if "cpmh_backend" in frame.filename.replace("\\", "/")]
+    frame = (own or frames)[-1] if frames else None
+    where = f" ({Path(frame.filename).name}:{frame.lineno})" if frame else ""
+    return f"{type(exc).__name__}: {exc}{where}"[:500]
+
+
+def _browser_gave_up(captured: dict) -> bool:
+    access = captured.get("access") if isinstance(captured.get("access"), dict) else {}
+    state = str(access.get("state") or "")
+    pages = [page for page in (captured.get("pages") or []) if isinstance(page, dict)]
+    if pages and captured.get("status") != "blocked":
+        return False
+    if captured.get("status") == "blocked" and state not in {"BROWSER_ERROR", "NAVIGATION_ERROR"}:
+        return False
+    return True
+
+
+def _read_saved_html(folder: Path, url: str) -> dict | None:
+    html_file = folder / "original" / "source.html"
+    if not html_file.exists() or html_file.stat().st_size == 0:
+        return None
+    from cpmh_backend.services.capture import pages_from_downloaded_html
+
+    return pages_from_downloaded_html(html_file.read_text(encoding="utf-8", errors="replace"), url, folder / "pages")
+
+
+def _pause_capture(session, job, document, captured: dict) -> None:
+    access = captured.get("access") if isinstance(captured.get("access"), dict) else {}
+    remember(session, job, document, access, source="capture")
+    _step(session, job, "capturing", "paused", str(access.get("message") or "A captura foi pausada.")[:500])
+
+
+def _capture_page(session, job, document, folder: Path, languages, allow_local, max_pages, timeout) -> None:
+    from cpmh_backend.services.capture import capture_html
+
+    try:
+        captured = capture_html(
+            document.normalized_url or document.url,
+            folder / "pages",
+            allow_local=allow_local,
+            max_pages=max_pages,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        logger.exception("captura html")
+        captured = {"status": "browser_failed", "pages": [], "error": _failure_text(exc)}
+    if not isinstance(captured, dict):
+        captured = {"status": "browser_failed", "pages": []}
+    if _browser_gave_up(captured):
+        fallback = _read_saved_html(folder, document.normalized_url or document.url or "")
+        if fallback and (fallback.get("pages") or fallback.get("status") == "blocked"):
+            if fallback.get("pages"):
+                _step(session, job, "capturing", "done", "O navegador não leu a página. O texto foi extraído do HTML recebido.")
+            captured = fallback
+    if captured.get("status") == "blocked":
+        _pause_capture(session, job, document, captured)
+        return
+    pages = [page for page in (captured.get("pages") or []) if isinstance(page, dict)]
+    if not pages:
+        raise AppError("A página foi recebida, mas não havia texto para extrair.")
+    document.capture_status = "complete" if captured.get("source") == "html_text" else (captured.get("status") or "inconclusive")
+    _persist_rendered_pages(session, job, document, pages, languages, folder)
+    if document.capture_status != "complete":
+        document.state = "inconclusive"
+
+
+def _recover_html(session, job, document, folder: Path, languages, exc: BaseException) -> bool:
+    fallback = _read_saved_html(folder, document.normalized_url or document.url or "")
+    if not fallback or not fallback.get("pages"):
+        return False
+    logger.exception("leitura do pdf indicado pela página: %s", exc)
+    checkpoint = dict(job.checkpoint or {})
+    checkpoint["pages_done"] = []
+    job.checkpoint = checkpoint
+    document.source_kind = "html"
+    document.local_path = ""
+    document.capture_status = "complete"
+    _step(session, job, "capturing", "done", "O PDF indicado pela página não pôde ser lido. O texto foi extraído do HTML recebido.")
+    _persist_rendered_pages(session, job, document, fallback["pages"], languages, folder)
+    return True
 
 
 def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path) -> None:
