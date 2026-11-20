@@ -39,6 +39,7 @@ from cpmh_backend.models import (
     TableRecord,
     TranslationRecord,
     UserPreference,
+    as_utc_iso,
     utcnow,
 )
 from cpmh_backend.security import domain_of, normalize_url, safe_filename, validate_import_bytes, validate_url
@@ -213,7 +214,7 @@ class ImageExportIn(BaseModel):
 
 
 def _dt(value):
-    return value.isoformat() if value else None
+    return as_utc_iso(value)
 
 
 def project_out(item: Project, db: Session) -> dict:

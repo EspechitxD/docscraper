@@ -15,7 +15,7 @@ from cpmh_backend.access_flow import remember
 from cpmh_backend.config import get_settings
 from cpmh_backend.db import preference_value, session_scope
 from cpmh_backend.errors import AccessPaused, AppError, CollisionError, UrlRejected
-from cpmh_backend.recovery import managed_fetch, timeout_for
+from cpmh_backend.recovery import declared_pdf, managed_fetch, timeout_for
 from cpmh_backend.hashing import dhash, sha256_bytes, sha256_file
 from cpmh_backend.intelligence import Block, FlowPiece, classify_blocks, detect_language, link_page_continuity, reading_order
 from cpmh_backend.models import (
@@ -62,11 +62,13 @@ def run_job(job_id: str) -> None:
         job.attempts = (job.attempts or 0) + 1
         job.started_at = job.started_at or utcnow()
         job.error = ""
+        session.flush()
         try:
             _execute(session, settings, job, document)
         except AccessPaused as exc:
-            remember(session, job, document, exc.verdict, source="capture")
-            _step(session, job, "capturing", "paused", exc.verdict.get("message", "")[:500])
+            verdict = exc.verdict if isinstance(exc.verdict, dict) else {}
+            remember(session, job, document, verdict, source="capture")
+            _step(session, job, "capturing", "paused", str(verdict.get("message") or "Acesso pausado.")[:500])
         except CollisionError as exc:
             job.state = "awaiting_review"
             job.stage = "exporting"
@@ -82,6 +84,8 @@ def run_job(job_id: str) -> None:
             job.state = "failed"
             job.error = message[:500]
             job.finished_at = utcnow()
+            job.started_at = job.started_at or job.finished_at
+            job.attempts = job.attempts or 1
             document.state = "failed"
             document.error_message = job.error
             _step(session, job, "error", "failed", job.error)
@@ -90,6 +94,8 @@ def run_job(job_id: str) -> None:
             job.state = "failed"
             job.error = f"{type(exc).__name__}: {exc}"[:500]
             job.finished_at = utcnow()
+            job.started_at = job.started_at or job.finished_at
+            job.attempts = job.attempts or 1
             document.state = "failed"
             document.error_message = job.error
             _step(session, job, "error", "failed", job.error)
@@ -174,13 +180,16 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
             max_pages=max_pages,
             timeout=timeout,
         )
+        if not isinstance(captured, dict):
+            raise AppError("A captura da página não devolveu um resultado utilizável.")
         if captured.get("status") == "blocked":
-            remember(session, job, document, captured["access"], source="capture")
-            _step(session, job, "capturing", "paused", captured["access"].get("message", "")[:500])
+            access = captured.get("access") if isinstance(captured.get("access"), dict) else {}
+            remember(session, job, document, access, source="capture")
+            _step(session, job, "capturing", "paused", str(access.get("message") or "A captura foi pausada.")[:500])
             return
-        document.capture_status = captured["status"]
-        _persist_rendered_pages(session, job, document, captured["pages"], languages, folder)
-        if captured["status"] != "complete":
+        document.capture_status = captured.get("status") or "inconclusive"
+        _persist_rendered_pages(session, job, document, captured.get("pages") or [], languages, folder)
+        if captured.get("status") != "complete":
             document.state = "inconclusive"
     else:
         _persist_rendered_pages(
@@ -258,7 +267,7 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     trace: list[dict] = []
 
     def stopped() -> bool:
-        session.refresh(job)
+        _reload_job(session, job)
         return job.state in {"cancelled", "paused"}
 
     try:
@@ -274,6 +283,30 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     except AccessPaused:
         _store_trace(job, trace)
         raise
+    if result.kind == "html":
+        text = result.data.decode("utf-8", errors="replace")
+        declared = declared_pdf(text, result.final_url)
+        if declared:
+            try:
+                pdf_result, _pdf_cached = managed_fetch(
+                    declared["url"],
+                    allow_local=allow_local,
+                    max_bytes=max_bytes,
+                    timeout=timeout,
+                    domain_limit=domain_limit,
+                    should_stop=stopped,
+                    trace=trace,
+                )
+            except AccessPaused:
+                _step(session, job, "validating", "done", "O PDF indicado pela página não foi baixado. A extração continua na página HTML.")
+            except (AppError, UrlRejected) as exc:
+                if "cancelada" in str(getattr(exc, "message", exc)).lower():
+                    _store_trace(job, trace)
+                    raise
+                _step(session, job, "validating", "done", "O PDF indicado pela página não foi baixado. A extração continua na página HTML.")
+            else:
+                if pdf_result.kind == "pdf":
+                    result = pdf_result
     _store_trace(job, trace)
     if result.kind == "pdf":
         destination = folder / "original" / "source.pdf"
@@ -337,6 +370,8 @@ def _persist_rendered_pages(session, job, document, pages: list[dict], languages
     if not done:
         _replace_pages(session, document)
     for page in pages:
+        if not isinstance(page, dict):
+            continue
         if page.get("sequence") in done:
             continue
         if not page.get("blocks"):
@@ -457,7 +492,7 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
         block.language = region.language
         session.add(region)
     table = page.get("table")
-    if table:
+    if isinstance(table, dict) and table:
         crop_path = ""
         if image is not None and table.get("bbox"):
             from cpmh_backend.hashing import crop_normalized
@@ -485,6 +520,8 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
             )
         )
     for image_info in page.get("images") or []:
+        if not isinstance(image_info, dict) or image_info.get("image") is None or not image_info.get("bbox"):
+            continue
         asset = image_info["image"]
         filename = f"imagem-{page['sequence']:04d}-{new_id()[:8]}.png"
         asset_path = folder / "images" / filename
@@ -511,6 +548,8 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
             )
         )
     for formula in page.get("formulas") or []:
+        if not isinstance(formula, dict) or formula.get("block") is None:
+            continue
         block = formula["block"]
         crop = formula.get("crop")
         crop_path = ""
@@ -720,8 +759,13 @@ def _clear_working_files(session, document: Document, folder: Path) -> None:
         target.mkdir(parents=True, exist_ok=True)
 
 
-def _stage(session, job, document, stage: str, progress: float) -> bool:
+def _reload_job(session, job) -> None:
+    session.flush()
     session.refresh(job)
+
+
+def _stage(session, job, document, stage: str, progress: float) -> bool:
+    _reload_job(session, job)
     if job.state in {"paused", "cancelled"}:
         return False
     job.state = stage
@@ -734,12 +778,12 @@ def _stage(session, job, document, stage: str, progress: float) -> bool:
 
 
 def _stopped(session, job) -> bool:
-    session.refresh(job)
+    _reload_job(session, job)
     return job.state in {"paused", "cancelled"}
 
 
 def _finish(session, job, document, state: str, message: str) -> None:
-    session.refresh(job)
+    _reload_job(session, job)
     if job.state in {"paused", "cancelled"}:
         return
     job.state = "completed" if state in {"completed", "awaiting_review", "inconclusive"} else state

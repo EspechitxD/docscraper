@@ -51,6 +51,10 @@ def test_html_viewer_stops_at_declared_last_page(client):
         document_id = added.json()["document"]["id"]
         job = client.post(f"/api/documents/{document_id}/jobs", json={}).json()
         run_job(job["id"])
+        finished = client.get(f"/api/jobs/{job['id']}").json()
+        assert finished["attempts"] == 1
+        assert finished["started_at"].endswith("Z")
+        assert "AttributeError" not in (finished["error"] or "")
         document = client.get(f"/api/documents/{document_id}").json()
         pages = client.get(f"/api/documents/{document_id}/pages").json()
         assert document["capture_status"] == "complete", document

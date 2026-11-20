@@ -95,6 +95,11 @@ _DOM = """
 """
 
 
+def browser_snapshot(value) -> dict | None:
+    """O navegador às vezes devolve nulo em vez do objeto da página."""
+    return value if isinstance(value, dict) else None
+
+
 def browser_status() -> dict:
     chrome = shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium")
     try:
@@ -155,7 +160,10 @@ def capture_html(
             except PlaywrightTimeout:
                 pass
             page.wait_for_timeout(250)
-            observed = page.evaluate(_SIGNALS)
+            observed = browser_snapshot(page.evaluate(_SIGNALS))
+            if observed is None:
+                verdict = classify({"url": validated.url, "final_url": page.url, "navigation_error": "browser"})
+                return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
             verdict = classify(
                 {
                     "url": validated.url,
@@ -176,8 +184,8 @@ def capture_html(
             for index in range(max_pages):
                 png = out_dir / f"capture-{index + 1:04d}.png"
                 page.screenshot(path=str(png), full_page=True)
-                info = page.evaluate(_EXTRACT)
-                dom = page.evaluate(_DOM)
+                info = browser_snapshot(page.evaluate(_EXTRACT)) or {}
+                dom = browser_snapshot(page.evaluate(_DOM))
                 image = Image.open(png)
                 digest = sha256_file(png)
                 perceptual = dhash(image)
@@ -272,7 +280,9 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             except PlaywrightTimeout:
                 pass
             page.wait_for_timeout(200)
-            observed = page.evaluate(_SIGNALS)
+            observed = browser_snapshot(page.evaluate(_SIGNALS))
+            if observed is None:
+                return classify({"url": validated.url, "final_url": page.url, "navigation_error": "browser"})
             return classify(
                 {
                     "url": validated.url,
@@ -291,7 +301,9 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             browser.close()
 
 
-def _blocks_from_dom(dom: dict, image_size: tuple[int, int]) -> list[Block]:
+def _blocks_from_dom(dom: dict | None, image_size: tuple[int, int]) -> list[Block]:
+    if not isinstance(dom, dict):
+        return []
     width = dom.get("width") or image_size[0] or 1
     height = dom.get("height") or image_size[1] or 1
     scale_x = image_size[0] / width if width else 1
@@ -311,7 +323,9 @@ def _blocks_from_dom(dom: dict, image_size: tuple[int, int]) -> list[Block]:
     }
     blocks: list[Block] = []
     for node in dom.get("nodes") or []:
-        text = " ".join((node.get("text") or "").split())
+        if not isinstance(node, dict):
+            continue
+        text = " ".join(str(node.get("text") or "").split())
         if not text:
             continue
         x = max(node.get("x") or 0, 0) * scale_x / image_size[0]

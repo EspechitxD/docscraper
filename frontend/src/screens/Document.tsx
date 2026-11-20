@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, nextStep, stateLabel } from "../labels";
+import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatDuration, formatWhen, isActiveState, nextStep, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
 
 type Tab = "process" | "review" | "structure" | "export" | "browser";
@@ -123,7 +123,7 @@ export function DocumentScreen() {
             <span>Origem</span><strong className="mono">{doc.url || doc.origin}</strong>
             <span>Domínio</span><strong>{doc.domain || "—"}</strong>
             <span>Tipo</span><strong>{doc.source_kind || "desconhecido"}</strong>
-            <span>Inclusão</span><strong>{formatWhen(doc.added_at)} (Brasília)</strong>
+            <span>Inclusão</span><strong>{formatWhen(doc.added_at)}</strong>
             <span>Conclusão</span><strong>{formatWhen(doc.completed_at)}</strong>
             <span>Exportado</span><strong>{doc.exported_formats.join(", ") || "ainda não"}</strong>
           </div>
@@ -161,7 +161,8 @@ export function DocumentScreen() {
               <h2>Etapa atual: {stateLabel(latest.stage)}</h2>
               <Progress value={latest.progress} />
               <p>{latest.attempts} tentativas. Início {formatWhen(latest.started_at)}. Fim {formatWhen(latest.finished_at)}.</p>
-              {!latest.started_at && <p>Ainda não há tempo decorrido. A estimativa só aparece quando houver páginas já medidas.</p>}
+              {latest.started_at && latest.finished_at && <p>Duração {formatDuration(latest.started_at, latest.finished_at)}.</p>}
+              {!latest.started_at && <p>O horário de início aparece quando a extração começa.</p>}
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Quando</th><th>Etapa</th><th>Estado</th><th>Mensagem</th></tr></thead>
