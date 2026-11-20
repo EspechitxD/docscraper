@@ -176,6 +176,17 @@ class GlossaryIn(BaseModel):
     project_id: str | None = None
 
 
+class AccessObservation(BaseModel):
+    url: str = ""
+    final_url: str = ""
+    status: int = 0
+    title: str = ""
+    text: str = ""
+    markers: list[str] = Field(default_factory=list)
+    iframes: list[str] = Field(default_factory=list)
+    scripts: list[str] = Field(default_factory=list)
+
+
 class TermIn(BaseModel):
     source: str
     target: str = ""
@@ -821,9 +832,104 @@ def pause_job(job_id: str, db: Session = Depends(get_db)):
     return job_out(item)
 
 
+@router.get("/jobs/{job_id}/access", dependencies=[Depends(require_token)])
+def access_history(job_id: str, db: Session = Depends(get_db)):
+    item = _job(db, job_id)
+    from cpmh_backend.access_flow import resume_reason
+    from cpmh_backend.models import AccessEvent
+
+    rows = db.scalars(select(AccessEvent).where(AccessEvent.job_id == item.id).order_by(AccessEvent.created_at)).all()
+    access = (item.checkpoint or {}).get("access") or {}
+    return {
+        "access": access,
+        "resumable": resume_reason(item.checkpoint) is None,
+        "reason": resume_reason(item.checkpoint) or "",
+        "events": [
+            {
+                "id": row.id,
+                "state": row.state,
+                "provider": row.provider,
+                "confidence": row.confidence,
+                "url": row.url,
+                "evidence": row.evidence or [],
+                "created_at": _dt(row.created_at),
+            }
+            for row in rows
+        ],
+    }
+
+
+@router.post("/jobs/{job_id}/access/recheck", dependencies=[Depends(require_token)])
+def recheck_access(job_id: str, db: Session = Depends(get_db)):
+    item = _job(db, job_id)
+    document = db.get(Document, item.document_id)
+    if document is None or not (document.normalized_url or document.url):
+        raise HTTPException(status_code=400, detail={"code": "url", "message": "Esta tarefa não tem URL para checar."})
+    from cpmh_backend.access_flow import remember, resume_reason
+    from cpmh_backend.services.capture import probe_html
+
+    timeout = float(preference_value(db, "timeout_seconds") or 30)
+    verdict = probe_html(document.normalized_url or document.url, allow_local=_network_allowed(db), timeout=timeout)
+    remember(db, item, document, verdict, source="recheck")
+    audit(db, "access", verdict.get("message", "")[:500], {"job_id": item.id, "state": verdict.get("state"), "provider": verdict.get("provider")})
+    return {"access": (item.checkpoint or {}).get("access") or {}, "resumable": resume_reason(item.checkpoint) is None}
+
+
+@router.post("/jobs/{job_id}/access/observation", dependencies=[Depends(require_token)])
+def observe_access(job_id: str, payload: AccessObservation, db: Session = Depends(get_db)):
+    item = _job(db, job_id)
+    document = db.get(Document, item.document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
+    from cpmh_backend.access import classify
+    from cpmh_backend.access_flow import remember
+
+    verdict = classify(
+        {
+            "url": payload.url[:500],
+            "final_url": payload.final_url[:500],
+            "status": payload.status,
+            "title": payload.title[:300],
+            "text": payload.text[:1500],
+            "markers": payload.markers[:20],
+            "iframes": payload.iframes[:20],
+            "scripts": payload.scripts[:30],
+        }
+    )
+    remember(db, item, document, verdict, source="browser")
+    return {"access": (item.checkpoint or {}).get("access") or {}, "observed": verdict["state"]}
+
+
+@router.post("/jobs/{job_id}/access/close", dependencies=[Depends(require_token)])
+def close_access_session(job_id: str, db: Session = Depends(get_db)):
+    item = _job(db, job_id)
+    checkpoint = dict(item.checkpoint or {})
+    access = dict(checkpoint.get("access") or {})
+    access["session_closed"] = True
+    access["cleared"] = False
+    access["cleared_at"] = ""
+    checkpoint["access"] = access
+    item.checkpoint = checkpoint
+    audit(db, "access", "Sessão de verificação encerrada.", {"job_id": item.id, "partition": access.get("partition") or ""})
+    return {"partition": access.get("partition") or "", "closed": True}
+
+
 @router.post("/jobs/{job_id}/resume", dependencies=[Depends(require_token)])
 def resume_job(job_id: str, request: Request, db: Session = Depends(get_db)):
     item = _job(db, job_id)
+    from cpmh_backend.access_flow import resume_reason
+
+    reason = resume_reason(item.checkpoint)
+    if reason:
+        if "expirou" in reason:
+            checkpoint = dict(item.checkpoint or {})
+            access = dict(checkpoint.get("access") or {})
+            access["cleared"] = False
+            access["cleared_at"] = ""
+            access["message"] = reason
+            checkpoint["access"] = access
+            item.checkpoint = checkpoint
+        raise HTTPException(status_code=409, detail={"code": "access_blocked", "message": reason})
     item.state = "queued"
     document = db.get(Document, item.document_id)
     if document is not None:

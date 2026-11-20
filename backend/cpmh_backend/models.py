@@ -294,6 +294,22 @@ class ProcessingJob(Base):
     steps: Mapped[list[ProcessingStep]] = relationship(back_populates="job", cascade="all, delete-orphan")
 
 
+class AccessEvent(Base):
+    __tablename__ = "access_events"
+    __table_args__ = (Index("ix_access_events_job", "job_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    job_id: Mapped[str] = mapped_column(ForeignKey("processing_jobs.id", ondelete="CASCADE"))
+    document_id: Mapped[str] = mapped_column(String(36), default="")
+    project_id: Mapped[str] = mapped_column(String(36), default="")
+    state: Mapped[str] = mapped_column(String(40))
+    provider: Mapped[str] = mapped_column(String(40), default="none")
+    confidence: Mapped[float] = mapped_column(Float, default=0)
+    url: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ProcessingStep(Base):
     __tablename__ = "processing_steps"
 

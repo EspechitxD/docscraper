@@ -12,7 +12,9 @@ from sqlalchemy import delete, select
 
 from cpmh_backend.config import get_settings
 from cpmh_backend.db import preference_value, session_scope
-from cpmh_backend.errors import AppError, CollisionError, UrlRejected
+from cpmh_backend.access import classify, signals_from_html
+from cpmh_backend.access_flow import remember
+from cpmh_backend.errors import AccessPaused, AppError, CollisionError, HttpAccess, UrlRejected
 from cpmh_backend.hashing import dhash, sha256_bytes, sha256_file
 from cpmh_backend.intelligence import Block, FlowPiece, classify_blocks, detect_language, link_page_continuity, reading_order
 from cpmh_backend.models import (
@@ -62,6 +64,9 @@ def run_job(job_id: str) -> None:
         job.error = ""
         try:
             _execute(session, settings, job, document)
+        except AccessPaused as exc:
+            remember(session, job, document, exc.verdict, source="capture")
+            _step(session, job, "capturing", "paused", exc.verdict.get("message", "")[:500])
         except CollisionError as exc:
             job.state = "awaiting_review"
             job.stage = "exporting"
@@ -162,6 +167,10 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
             max_pages=max_pages,
             timeout=timeout,
         )
+        if captured.get("status") == "blocked":
+            remember(session, job, document, captured["access"], source="capture")
+            _step(session, job, "capturing", "paused", captured["access"].get("message", "")[:500])
+            return
         document.capture_status = captured["status"]
         _persist_rendered_pages(session, job, document, captured["pages"], languages, folder)
         if captured["status"] != "complete":
@@ -229,7 +238,11 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     if not document.url:
         raise AppError("O documento não possui arquivo local nem URL.")
     _step(session, job, "validating", "done", "URL validada para download autorizado.")
-    result = fetch_url(document.url, allow_local=allow_local, max_bytes=max_bytes, timeout=timeout)
+    try:
+        result = fetch_url(document.url, allow_local=allow_local, max_bytes=max_bytes, timeout=timeout)
+    except HttpAccess as exc:
+        signals = signals_from_html(document.url or "", exc.final_url, exc.http_status, exc.snippet)
+        raise AccessPaused(classify(signals)) from exc
     if result.kind == "pdf":
         destination = folder / "original" / "source.pdf"
         destination.write_bytes(result.data)
@@ -274,9 +287,12 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
         if _stopped(session, job):
             return
         _store_page(session, document, page, folder, document.url)
-        done = list((job.checkpoint or {}).get("pages_done") or [])
+        checkpoint = dict(job.checkpoint or {})
+        done = list(checkpoint.get("pages_done") or [])
         done.append(page["sequence"])
-        job.checkpoint = {"pages_done": done, "stage": "ocr"}
+        checkpoint["pages_done"] = done
+        checkpoint["stage"] = "ocr"
+        job.checkpoint = checkpoint
         session.flush()
     _step(session, job, "ocr", "done", f"{analysis['page_count']} página(s) analisadas a partir do PDF.")
 
@@ -284,8 +300,13 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
 def _persist_rendered_pages(session, job, document, pages: list[dict], languages, folder: Path) -> None:
     if not _stage(session, job, document, "ocr", 40):
         return
-    _replace_pages(session, document)
+    checkpoint = dict(job.checkpoint or {})
+    done = set(checkpoint.get("pages_done") or [])
+    if not done:
+        _replace_pages(session, document)
     for page in pages:
+        if page.get("sequence") in done:
+            continue
         if not page.get("blocks"):
             image = Image.open(page["path"]).convert("RGB")
             blocks, image, notes = recognize(image, languages)
@@ -296,9 +317,14 @@ def _persist_rendered_pages(session, job, document, pages: list[dict], languages
             page["notes"] = notes
             page["source"] = "ocr"
         _store_page(session, document, page, folder, page.get("source_url") or document.url)
-    document.page_count = len(pages)
-    document.page_count_estimate = len(pages)
-    _step(session, job, "ocr", "done", f"{len(pages)} página(s) reconhecidas.")
+        done.add(page["sequence"])
+        checkpoint = dict(job.checkpoint or {})
+        checkpoint["pages_done"] = sorted(done)
+        checkpoint["stage"] = "ocr"
+        job.checkpoint = checkpoint
+    document.page_count = len(done) or len(pages)
+    document.page_count_estimate = document.page_count
+    _step(session, job, "ocr", "done", f"{document.page_count} página(s) reconhecidas.")
 
 
 def _image_page(path: Path, languages: list[str]) -> dict:

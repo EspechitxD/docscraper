@@ -5,9 +5,30 @@ from pathlib import Path
 
 from PIL import Image
 
+import time
+
+from cpmh_backend.access import classify
 from cpmh_backend.hashing import dhash, looks_blank, looks_partial, sha256_file
 from cpmh_backend.intelligence import Block, PageObservation, WordBox, decide_capture
 from cpmh_backend.security import validate_url
+
+_SIGNALS = """
+() => {
+  const src = (el) => el.getAttribute("src") || "";
+  const selectors = [
+    ".g-recaptcha", "#g-recaptcha-response", ".h-captcha", ".cf-turnstile",
+    "#challenge-form", ".cf-browser-verification", "#cf-challenge-running",
+    "input[type='password']", "#captcha", ".captcha"
+  ];
+  return {
+    title: document.title || "",
+    text: document.body ? document.body.innerText.slice(0, 1500) : "",
+    iframes: Array.from(document.querySelectorAll("iframe")).map(src).filter(Boolean).slice(0, 20),
+    scripts: Array.from(document.querySelectorAll("script")).map(src).filter(Boolean).slice(0, 30),
+    markers: selectors.filter((selector) => document.querySelector(selector))
+  };
+}
+"""
 
 _EXTRACT = """
 () => {
@@ -96,6 +117,8 @@ def capture_html(
     status_info = browser_status()
     if not status_info["playwright"] or not status_info["chrome"]:
         raise RuntimeError("Chromium ou Playwright não está disponível para a captura HTML.")
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
     from playwright.sync_api import sync_playwright
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -117,8 +140,29 @@ def capture_html(
                 route.continue_()
 
             page.route("**/*", guard)
-            page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+            started = time.perf_counter()
+            try:
+                response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+            except (PlaywrightTimeout, PlaywrightError):
+                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "navegação não concluída"})
+                return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
             page.wait_for_timeout(250)
+            observed = page.evaluate(_SIGNALS)
+            verdict = classify(
+                {
+                    "url": validated.url,
+                    "final_url": page.url,
+                    "status": response.status if response is not None else 0,
+                    "title": observed.get("title") or "",
+                    "text": observed.get("text") or "",
+                    "markers": observed.get("markers") or [],
+                    "iframes": observed.get("iframes") or [],
+                    "scripts": observed.get("scripts") or [],
+                    "elapsed_ms": int((time.perf_counter() - started) * 1000),
+                }
+            )
+            if verdict["state"] != "ACCESS_GRANTED":
+                return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
             for index in range(max_pages):
                 png = out_dir / f"capture-{index + 1:04d}.png"
                 page.screenshot(path=str(png), full_page=True)
@@ -181,6 +225,52 @@ def capture_html(
             Path(pages[-1]["path"]).unlink(missing_ok=True)
             pages.pop()
     return {"status": capture_status, "pages": pages, "final_url": validated.url}
+
+
+def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
+    """Abre a URL só para classificar o acesso. Não extrai páginas."""
+    validated = validate_url(url, allow_local=allow_local)
+    status_info = browser_status()
+    if not status_info["playwright"] or not status_info["chrome"]:
+        return classify({"url": validated.url, "navigation_error": "navegador de captura indisponível"})
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        try:
+            page = browser.new_context(viewport={"width": 1280, "height": 1600}).new_page()
+
+            def guard(route):
+                try:
+                    validate_url(route.request.url, allow_local=allow_local)
+                except Exception:
+                    route.abort()
+                    return
+                route.continue_()
+
+            page.route("**/*", guard)
+            try:
+                response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+            except (PlaywrightTimeout, PlaywrightError):
+                return classify({"url": validated.url, "final_url": validated.url, "navigation_error": "navegação não concluída"})
+            page.wait_for_timeout(200)
+            observed = page.evaluate(_SIGNALS)
+            return classify(
+                {
+                    "url": validated.url,
+                    "final_url": page.url,
+                    "status": response.status if response is not None else 0,
+                    "title": observed.get("title") or "",
+                    "text": observed.get("text") or "",
+                    "markers": observed.get("markers") or [],
+                    "iframes": observed.get("iframes") or [],
+                    "scripts": observed.get("scripts") or [],
+                }
+            )
+        finally:
+            browser.close()
 
 
 def _blocks_from_dom(dom: dict, image_size: tuple[int, int]) -> list[Block]:

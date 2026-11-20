@@ -1,3 +1,23 @@
+export const ACCESS_STATES: Record<string, string> = {
+  ACCESS_GRANTED: "Acesso aberto",
+  CAPTCHA_DETECTED: "CAPTCHA detectado",
+  HUMAN_VERIFICATION_REQUIRED: "Verificação humana",
+  AUTHENTICATION_REQUIRED: "Autenticação exigida",
+  ACCESS_DENIED: "Acesso negado",
+  RATE_LIMITED: "Limite de pedidos",
+  UNKNOWN_BLOCK: "Bloqueio não classificado",
+  NAVIGATION_ERROR: "Erro de navegação",
+};
+
+export const ACCESS_PROVIDERS: Record<string, string> = {
+  recaptcha_v2: "Google reCAPTCHA",
+  hcaptcha: "hCaptcha",
+  turnstile: "Cloudflare Turnstile",
+  cloudflare_challenge: "Desafio Cloudflare",
+  unknown: "Não identificado",
+  none: "—",
+};
+
 export const STATES: Record<string, string> = {
   draft: "Rascunho",
   queued: "Aguardando",

@@ -13,7 +13,7 @@ from cpmh_backend.config import Settings, get_settings
 from cpmh_backend.logging_setup import setup_logging
 from cpmh_backend.models import Base, PreferenceProfile, SchemaMigration, UserPreference, utcnow
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 DEFAULT_PREFERENCES: dict[str, object] = {
     "ui_language": "pt-BR",
