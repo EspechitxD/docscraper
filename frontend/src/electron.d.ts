@@ -13,6 +13,12 @@ declare global {
       browserReload: () => Promise<void>;
       browserZoom: (factor: number) => Promise<number>;
       browserState: () => Promise<{ url: string; title: string; canBack: boolean; canForward: boolean; loading: boolean }>;
+      browserOverlay: (payload: {
+        visible: boolean;
+        selectedId?: string;
+        categories?: string[];
+        regions: { id: string; category: string; bbox: number[] }[];
+      }) => Promise<void>;
     };
   }
 }

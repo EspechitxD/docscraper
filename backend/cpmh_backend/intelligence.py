@@ -59,6 +59,7 @@ class Block:
     language: str = ""
     level: int = 0
     words: list[WordBox] = field(default_factory=list)
+    notes: str = ""
 
 
 @dataclass
@@ -146,7 +147,7 @@ def assess_formula(text: str) -> tuple[bool, str]:
     if len(stripped) > 80 or stripped.count("=") > 1:
         return False, "Expressão longa demais para reconstrução editável confiável."
     if _is_formula(stripped):
-        return True, "Expressão linear simples preservada como texto."
+        return True, "Expressão linear simples. O DOCX recebe equação OMML; o recorte original permanece."
     return False, "Reconhecimento insuficiente. O recorte original é preservado."
 
 
@@ -154,48 +155,80 @@ def _norm_key(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-def classify_blocks(blocks: list[Block]) -> list[Block]:
-    heights = [
+_NUMBERED_HEADING = re.compile(r"^\d+(?:\.\d+){0,3}\s+\S")
+
+
+def _body_reference(blocks: list[Block]) -> tuple[float, float]:
+    """Mediana do corpo, sem deixar o maior título inflar o limiar."""
+    heights = sorted(
         block.font_size or block.bbox[3]
         for block in blocks
         if len(block.text.strip()) >= 8 and (block.font_size or block.bbox[3]) > 0
-    ]
-    median = statistics.median(heights) if heights else 0.02
+    )
+    if not heights:
+        return 0.02, 0.0
+    if len(heights) == 1:
+        return heights[0], heights[0]
+    if len(heights) == 2:
+        return heights[0], heights[-1]
+    return statistics.median(heights[:-1]), heights[-1]
+
+
+def classify_blocks(blocks: list[Block]) -> list[Block]:
+    reference, largest = _body_reference(blocks)
     for block in blocks:
         text = " ".join(block.text.split())
         block.text = text
         y = block.bbox[1]
         height = block.font_size or block.bbox[3]
+        centered = abs((block.bbox[0] + block.bbox[2] / 2) - 0.5) < 0.12
         if _PAGE_NUMBER.match(text):
             block.category = "page_number"
             block.level = 0
+            block.notes = "padrão de numeração de página"
             continue
         if _is_formula(text):
             block.category = "equation" if any(char in text for char in "∫∑∏√") else "formula"
             block.level = 0
+            block.notes = "símbolos matemáticos"
             continue
         if y < 0.055 and len(text) <= 160:
             block.category = "header"
+            block.notes = "faixa superior da página"
             continue
         if y > 0.925 and len(text) <= 180:
             block.category = "footer"
+            block.notes = "faixa inferior da página"
             continue
         if _CAPTION.match(text):
             block.category = "caption"
+            block.notes = "prefixo de legenda"
             continue
         if _REFERENCE.match(text):
             block.category = "reference"
+            block.notes = "padrão de referência"
             continue
-        if height >= median * 1.22 and len(text) <= 90 and y < 0.35 and not text.endswith("."):
+        short = len(text) <= 90 and not text.endswith(".")
+        clearly_larger = height >= reference * 1.28 and short and y < 0.42
+        dominant = short and y < 0.32 and largest > 0 and height >= largest * 0.98 and height >= reference * 1.15
+        if clearly_larger or dominant:
             block.category = "title"
             block.level = 1
+            block.notes = "fonte maior que o corpo" + ("; centralizado" if centered else "")
             continue
-        if height >= median * 1.18 and len(text) <= 120 and not text.endswith(".") and y < 0.7:
+        numbered = bool(_NUMBERED_HEADING.match(text)) and len(text) <= 120 and not text.endswith(".")
+        if (height >= reference * 1.12 and len(text) <= 120 and not text.endswith(".") and y < 0.7) or numbered:
             block.category = "subtitle"
             block.level = 2
+            block.notes = "numeração de seção" if numbered else "fonte intermediária"
+            continue
+        if len(text) < 8 and not text:
+            block.category = "unknown"
+            block.notes = "texto insuficiente"
             continue
         block.category = "paragraph"
         block.level = 0
+        block.notes = "texto corrido"
     return blocks
 
 

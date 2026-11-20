@@ -35,7 +35,7 @@ def create_app(*, start_worker: bool = True) -> FastAPI:
     app = FastAPI(title="CPMH Document Intelligence", version=__version__, lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:5174", "http://localhost:5174"],
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=False,

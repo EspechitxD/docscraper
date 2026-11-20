@@ -97,3 +97,23 @@ const ACTIVE = new Set([
 export function isActiveState(value: string): boolean {
   return ACTIVE.has(value);
 }
+
+export const TRANSLATION_MODES: { id: string; label: string }[] = [
+  { id: "none", label: "Sem tradução" },
+  { id: "selected_regions", label: "Somente regiões selecionadas" },
+  { id: "document_pt_br", label: "Documento em português" },
+  { id: "bilingual", label: "Original e tradução" },
+];
+
+const TRANSLATION_ALIASES: Record<string, string> = {
+  full: "document_pt_br",
+  portuguese: "document_pt_br",
+  portuguese_only: "document_pt_br",
+  selected: "selected_regions",
+  selection: "selected_regions",
+  side_by_side: "bilingual",
+};
+
+export function canonicalTranslationMode(value: string): string {
+  return TRANSLATION_ALIASES[value] || value || "none";
+}

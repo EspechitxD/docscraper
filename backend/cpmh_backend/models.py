@@ -129,10 +129,29 @@ class OCRRegion(Base):
     original_h: Mapped[float] = mapped_column(Float, default=0)
     source: Mapped[str] = mapped_column(String(32), default="ocr")
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    evidence: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     page: Mapped[DocumentPage] = relationship(back_populates="regions")
+
+
+class RegionRevision(Base):
+    __tablename__ = "region_revisions"
+    __table_args__ = (Index("ix_revisions_region", "region_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    region_id: Mapped[str] = mapped_column(String(36))
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    operation: Mapped[str] = mapped_column(String(32))
+    origin: Mapped[str] = mapped_column(String(32), default="user")
+    original_text: Mapped[str] = mapped_column(Text, default="")
+    revised_text: Mapped[str] = mapped_column(Text, default="")
+    original_category: Mapped[str] = mapped_column(String(32), default="")
+    revised_category: Mapped[str] = mapped_column(String(32), default="")
+    original_bbox: Mapped[list] = mapped_column(JSON, default=list)
+    revised_bbox: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class DocumentElement(Base):

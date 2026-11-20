@@ -31,6 +31,7 @@ from cpmh_backend.models import (
     LogEntry,
     OCRRegion,
     PreferenceProfile,
+    RegionRevision,
     ProcessingJob,
     Project,
     TableRecord,
@@ -189,6 +190,13 @@ class ImagePatch(BaseModel):
     name: str | None = None
     category: str | None = None
     caption: str | None = None
+    review_state: str | None = None
+
+
+class ImageExportIn(BaseModel):
+    ids: list[str] = []
+    output_dir: str
+    collision: str | None = None
 
 
 def _dt(value):
@@ -252,7 +260,25 @@ def region_out(item: OCRRegion) -> dict:
         "original_text": item.original_text,
         "original_category": item.original_category,
         "original_bbox": [item.original_x, item.original_y, item.original_w, item.original_h],
+        "evidence": item.evidence or "",
     }
+
+
+def _sync_region(db: Session, item: OCRRegion, operation: str, before: dict, origin: str = "user") -> None:
+    from cpmh_backend.services.representation import record_revision, refresh_document_representation, snapshot_region
+
+    document = db.get(Document, item.document_id)
+    record_revision(
+        db,
+        region_id=item.id,
+        document_id=item.document_id,
+        operation=operation,
+        origin=origin,
+        before=before,
+        after=snapshot_region(item),
+    )
+    if document is not None:
+        refresh_document_representation(db, document)
 
 
 def job_out(item: ProcessingJob) -> dict:
@@ -470,7 +496,7 @@ def patch_project(project_id: str, payload: ProjectPatch, db: Session = Depends(
         if payload.status not in {"active", "archived"}:
             raise HTTPException(status_code=400, detail={"code": "status", "message": "Estado de projeto inválido."})
         item.status = payload.status
-    if payload.glossary_id is not None:
+    if "glossary_id" in payload.model_fields_set:
         item.glossary_id = payload.glossary_id or None
     item.updated_at = utcnow()
     return project_out(item, db)
@@ -710,6 +736,31 @@ def create_job(document_id: str, payload: JobIn, request: Request, db: Session =
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
     if payload.external_translation and not payload.external_consent:
         raise HTTPException(status_code=403, detail={"code": "consent_required", "message": "A tradução externa exige consentimento explícito."})
+    from cpmh_backend.translation_modes import normalize_translation_mode
+
+    try:
+        mode = normalize_translation_mode(payload.translate_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"code": "translate_mode", "message": "Modo de tradução desconhecido."}) from exc
+    selected = list(dict.fromkeys(payload.selected_region_ids))
+    if mode == "selected_regions":
+        if not selected:
+            raise HTTPException(status_code=400, detail={"code": "selection_empty", "message": "Selecione ao menos uma região."})
+        rows = db.scalars(select(OCRRegion).where(OCRRegion.id.in_(selected))).all()
+        found = {row.id: row for row in rows}
+        for region_id in selected:
+            row = found.get(region_id)
+            if row is None or row.document_id != item.id or row.deleted:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "region_not_in_document", "message": "Uma região selecionada não pertence a este documento."},
+                )
+    if payload.glossary_id:
+        if db.get(Glossary, payload.glossary_id) is None:
+            raise HTTPException(status_code=400, detail={"code": "glossary", "message": "Glossário não encontrado."})
+    options = payload.model_dump()
+    options["translate_mode"] = mode
+    options["selected_region_ids"] = selected
     job = ProcessingJob(
         id=str(uuid.uuid4()),
         document_id=item.id,
@@ -719,7 +770,7 @@ def create_job(document_id: str, payload: JobIn, request: Request, db: Session =
         progress=0,
         attempts=0,
         checkpoint={},
-        options=payload.model_dump(),
+        options=options,
         created_at=utcnow(),
     )
     item.state = "queued"
@@ -883,6 +934,7 @@ def add_region(page_id: str, payload: RegionIn, db: Session = Depends(get_db)):
     )
     db.add(item)
     db.flush()
+    _sync_region(db, item, "create", {"text": "", "category": "", "bbox": []}, origin="user")
     return region_out(item)
 
 
@@ -891,6 +943,12 @@ def patch_region(region_id: str, payload: RegionPatch, db: Session = Depends(get
     item = db.get(OCRRegion, region_id)
     if item is None or item.deleted:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Região não encontrada."})
+    from cpmh_backend.services.representation import snapshot_region
+
+    before = snapshot_region(item)
+    text_changed = payload.text is not None and payload.text != item.text
+    category_changed = payload.category is not None and payload.category != item.category
+    bbox_changed = None not in {payload.x, payload.y, payload.w, payload.h} and [payload.x, payload.y, payload.w, payload.h] != before["bbox"]
     if payload.category is not None:
         if payload.category not in CATEGORIES:
             raise HTTPException(status_code=400, detail={"code": "category", "message": "Classificação desconhecida."})
@@ -901,9 +959,19 @@ def patch_region(region_id: str, payload: RegionPatch, db: Session = Depends(get
         item.x, item.y, item.w, item.h = clamp_bbox(payload.x, payload.y, payload.w, payload.h)
     if payload.review_state is not None:
         item.review_state = payload.review_state
-    else:
+    elif text_changed or category_changed or bbox_changed:
         item.review_state = "edited"
+    changes = [name for name, flag in (("edit_text", text_changed), ("reclassify", category_changed), ("move", bbox_changed)) if flag]
+    if payload.review_state == "reviewed" and not changes:
+        operation = "mark_reviewed"
+    elif len(changes) == 1:
+        operation = changes[0]
+    elif changes:
+        operation = "edit"
+    else:
+        operation = "mark_reviewed"
     item.updated_at = utcnow()
+    _sync_region(db, item, operation, before)
     return region_out(item)
 
 
@@ -912,8 +980,13 @@ def delete_region(region_id: str, db: Session = Depends(get_db)):
     item = db.get(OCRRegion, region_id)
     if item is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Região não encontrada."})
+    from cpmh_backend.services.representation import snapshot_region
+
+    before = snapshot_region(item)
     item.deleted = True
+    item.review_state = "edited"
     item.updated_at = utcnow()
+    _sync_region(db, item, "delete", before)
     return {"deleted": True}
 
 
@@ -922,12 +995,17 @@ def restore_region(region_id: str, db: Session = Depends(get_db)):
     item = db.get(OCRRegion, region_id)
     if item is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Região não encontrada."})
+    from cpmh_backend.services.representation import snapshot_region
+
+    before = snapshot_region(item)
     item.text = item.original_text
     item.category = item.original_category
     item.x, item.y, item.w, item.h = item.original_x, item.original_y, item.original_w, item.original_h
     item.deleted = False
     item.review_state = "pending"
+    item.source = "restored"
     item.updated_at = utcnow()
+    _sync_region(db, item, "restore", before, origin="restore")
     return region_out(item)
 
 
@@ -949,11 +1027,15 @@ def reprocess_region(region_id: str, db: Session = Depends(get_db)):
     blocks, _prepared, _notes = recognize(crop, languages)
     if not blocks:
         raise HTTPException(status_code=422, detail={"code": "ocr_empty", "message": "O OCR não leu texto nessa região."})
+    from cpmh_backend.services.representation import snapshot_region
+
+    before = snapshot_region(item)
     item.text = " ".join(block.text for block in blocks)
     item.confidence = round(sum(block.confidence for block in blocks) / len(blocks), 2)
     item.review_state = "edited"
-    item.source = "ocr"
+    item.source = "reprocessed"
     item.updated_at = utcnow()
+    _sync_region(db, item, "reprocess", before, origin="reprocess")
     return region_out(item)
 
 
@@ -994,6 +1076,8 @@ def list_images(document_id: str, db: Session = Depends(get_db)):
             "height": item.height,
             "confidence": item.confidence,
             "format": item.format,
+            "review_state": item.review_state,
+            "page_sequence": db.get(DocumentPage, item.page_id).sequence if item.page_id and db.get(DocumentPage, item.page_id) else None,
         }
         for item in rows
     ]
@@ -1012,14 +1096,134 @@ def patch_image(image_id: str, payload: ImagePatch, db: Session = Depends(get_db
     item = db.get(ImageAsset, image_id)
     if item is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Imagem não encontrada."})
+    changed = False
     if payload.name is not None:
         item.name = safe_filename(payload.name)
+        changed = True
     if payload.category is not None:
         item.category = payload.category
+        changed = True
     if payload.caption is not None:
         item.caption = payload.caption
-    item.review_state = "reviewed"
-    return {"id": item.id, "name": item.name, "category": item.category, "caption": item.caption}
+        changed = True
+    if payload.review_state is not None:
+        item.review_state = payload.review_state
+    elif changed:
+        item.review_state = "reviewed"
+    return {
+        "id": item.id,
+        "name": item.name,
+        "category": item.category,
+        "caption": item.caption,
+        "review_state": item.review_state,
+    }
+
+
+@router.delete("/images/{image_id}", dependencies=[Depends(require_token)])
+def delete_image(image_id: str, confirm: bool = False, db: Session = Depends(get_db)):
+    item = db.get(ImageAsset, image_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Imagem não encontrada."})
+    if not confirm:
+        raise HTTPException(status_code=409, detail={"code": "confirm_required", "message": "Confirme a exclusão da imagem."})
+    path = item.path
+    referenced = 0
+    if path:
+        referenced += db.scalar(select(func.count()).select_from(ImageAsset).where(ImageAsset.path == path, ImageAsset.id != item.id)) or 0
+        referenced += db.scalar(select(func.count()).select_from(FormulaRecord).where(FormulaRecord.image_path == path)) or 0
+        referenced += db.scalar(select(func.count()).select_from(TableRecord).where(TableRecord.image_path == path)) or 0
+    removed_file = False
+    db.delete(item)
+    db.flush()
+    if path and referenced == 0:
+        file_path = Path(path)
+        if file_path.exists():
+            file_path.unlink()
+            removed_file = True
+    return {"deleted": True, "file_removed": removed_file}
+
+
+@router.post("/documents/{document_id}/images/export", dependencies=[Depends(require_token)])
+def export_images(document_id: str, payload: ImageExportIn, db: Session = Depends(get_db)):
+    import shutil
+
+    from cpmh_backend.security import assert_output_dir_allowed
+    from cpmh_backend.services.exporting import resolve_output_path
+
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
+    try:
+        destination = assert_output_dir_allowed(Path(payload.output_dir), install_dir=get_settings().install_dir)
+    except AppError as exc:
+        raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
+    rows = db.scalars(select(ImageAsset).where(ImageAsset.document_id == document_id)).all()
+    if payload.ids:
+        wanted = set(payload.ids)
+        rows = [row for row in rows if row.id in wanted]
+        if len(rows) != len(wanted):
+            raise HTTPException(status_code=400, detail={"code": "image_not_in_document", "message": "Uma imagem não pertence a este documento."})
+    copied = []
+    try:
+        for image in rows:
+            source = Path(image.path)
+            if not source.exists():
+                continue
+            target = resolve_output_path(destination, image.name or f"{image.id}.{image.format or 'png'}", payload.collision)
+            shutil.copy2(source, target)
+            copied.append({"id": image.id, "path": str(target), "name": target.name})
+    except AppError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message}) from exc
+    return {"files": copied}
+
+
+@router.get("/documents/{document_id}/revisions", dependencies=[Depends(require_token)])
+def list_revisions(document_id: str, db: Session = Depends(get_db)):
+    rows = db.scalars(select(RegionRevision).where(RegionRevision.document_id == document_id).order_by(RegionRevision.created_at)).all()
+    return [
+        {
+            "id": item.id,
+            "region_id": item.region_id,
+            "operation": item.operation,
+            "origin": item.origin,
+            "original_text": item.original_text,
+            "revised_text": item.revised_text,
+            "original_category": item.original_category,
+            "revised_category": item.revised_category,
+            "original_bbox": item.original_bbox,
+            "revised_bbox": item.revised_bbox,
+            "created_at": _dt(item.created_at),
+        }
+        for item in rows
+    ]
+
+
+@router.get("/documents/{document_id}/translations", dependencies=[Depends(require_token)])
+def list_translations(document_id: str, db: Session = Depends(get_db)):
+    from cpmh_backend.translation_modes import translation_state
+
+    rows = db.scalars(select(TranslationRecord).where(TranslationRecord.document_id == document_id)).all()
+    return [
+        {
+            "id": item.id,
+            "element_id": item.element_id,
+            "mode": item.mode,
+            "provider": item.provider,
+            "partial": item.partial,
+            "state": translation_state(provider=item.provider, partial=item.partial),
+            "source_text": item.source_text,
+            "translated_text": item.translated_text,
+            "glossary_id": item.glossary_id,
+        }
+        for item in rows
+    ]
+
+
+@router.get("/translation/runtime", dependencies=[Depends(require_token)])
+def translation_runtime_route():
+    from cpmh_backend.services.translate import translation_runtime
+
+    return translation_runtime()
 
 
 @router.get("/documents/{document_id}/tables", dependencies=[Depends(require_token)])

@@ -13,6 +13,12 @@ const api = {
   browserZoom: (factor: number) => ipcRenderer.invoke("browser-zoom", factor),
   browserState: () =>
     ipcRenderer.invoke("browser-state") as Promise<{ url: string; title: string; canBack: boolean; canForward: boolean; loading: boolean }>,
+  browserOverlay: (payload: {
+    visible: boolean;
+    selectedId?: string;
+    categories?: string[];
+    regions: { id: string; category: string; bbox: number[] }[];
+  }) => ipcRenderer.invoke("browser-overlay", payload) as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld("cpmh", api);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, isApiError } from "../api";
 import { Button, Field, Notice } from "../components/ui";
+import { TRANSLATION_MODES, canonicalTranslationMode } from "../labels";
 
 type Prefs = Record<string, unknown>;
 
@@ -114,12 +115,8 @@ export function SettingsScreen() {
             <Field label="Confiança intermediária"><input className="field" type="number" value={Number(values.confidence_medium ?? 60)} onChange={(event) => update("confidence_medium", Number(event.target.value))} /></Field>
           </div>
           <Field label="Modo de tradução padrão">
-            <select className="select" value={String(values.translation_mode || "none")} onChange={(event) => update("translation_mode", event.target.value)}>
-              <option value="none">Sem tradução</option>
-              <option value="selected">Somente selecionados</option>
-              <option value="full">Documento completo</option>
-              <option value="side_by_side">Original e tradução</option>
-              <option value="portuguese">Somente português</option>
+            <select className="select" value={canonicalTranslationMode(String(values.translation_mode || "none"))} onChange={(event) => update("translation_mode", event.target.value)}>
+              {TRANSLATION_MODES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </Field>
         </section>
