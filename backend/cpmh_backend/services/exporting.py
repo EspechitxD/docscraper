@@ -115,7 +115,7 @@ def export_document(
         produced.append(("pdf", path))
     if "txt" in formats or "package" in formats:
         path = resolve_output_path(destination, f"{stem}.txt", collision)
-        path.write_text(_plain_text(elements, translations, mode, translate_mode), encoding="utf-8")
+        path.write_text(_plain_text(elements, translations, mode, translate_mode, images, tables), encoding="utf-8")
         produced.append(("txt", path))
     if "json" in formats or "package" in formats:
         path = resolve_output_path(destination, f"{stem}.json", collision)
@@ -427,7 +427,7 @@ def _write_pdf(path, document, elements, pages, tables, images, formulas, transl
     pdf.build(story)
 
 
-def _plain_text(elements, translations, mode, translate_mode) -> str:
+def _plain_text(elements, translations, mode, translate_mode, images=(), tables=()) -> str:
     trans = _translation_map(translations)
     lines = []
     note = _partial_note(translations) if _wants_translation(mode, translate_mode) else None
@@ -445,6 +445,20 @@ def _plain_text(elements, translations, mode, translate_mode) -> str:
             if text:
                 lines.append(text)
         lines.append("")
+    written = {line.strip() for line in lines if line.strip()}
+    for table in tables:
+        for row in getattr(table, "rows", None) or []:
+            line = " | ".join(str(cell or "").strip() for cell in row).strip(" |")
+            if line and line not in written:
+                lines.append(line)
+                lines.append("")
+                written.add(line)
+    for image in images:
+        caption = (getattr(image, "caption", "") or "").strip()
+        if caption and caption not in written:
+            lines.append(caption)
+            lines.append("")
+            written.add(caption)
     return "\n".join(lines).strip() + "\n"
 
 

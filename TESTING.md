@@ -59,10 +59,16 @@ O overlay, medido no Chrome com o script `electron/overlay.js`, ficou a 0 px do 
 
 A mesma sessão de Chrome abriu a interface em `127.0.0.1:5174` contra o backend em `127.0.0.1:8766`. A seleção vazia foi recusada na tela, uma região foi marcada, a imagem extraída apareceu no painel e a legenda gravada voltou na API como “Placa conferida na tela”, com revisão `reviewed`. O glossário do projeto foi retirado e colocado de novo. Não houve erro de JavaScript. A vista de 390×844 mostrou o painel de imagens.
 
+## Benchmark SciELO
+
+Em 20 de novembro de 2026 a suíte completa passou com 30 testes, em cerca de 25 segundos. Os quatro testes novos estão em `tests/test_scielo_regressions.py`: título que também é cabeçalho, grade que não pode engolir a página, palavra com marcador sobrescrito e TXT com legenda e células.
+
+O artigo externo está em `tests/fixtures/external/scielo/original.pdf`. O processamento e a comparação estão em SCIELO_BENCHMARK_REPORT.md. O recall do corpo no TXT corrigido foi 0,9853 sobre 8973 tokens medidos com `pypdf`, depois de retirar o expediente repetido. Não é uma taxa de OCR: o PDF tem texto digital.
+
 ## Não validado
 
 - Instalador NSIS em Windows 10 ou 11.
-- Precisão percentual de OCR, tabela ou tradução num conjunto público.
+- Precisão de OCR em páginas digitalizadas. O único PDF público desta rodada já traz texto.
 - Lotes de 50 ou 100 documentos grandes ou digitalizados.
 - Argos Translate e qualquer API paga de tradução.
 - O `WebContentsView` do Electron, porque o roteiro visual rodou no Chrome, não dentro da janela desktop.

@@ -17,12 +17,13 @@ Versão de trabalho: 0.1.0, com a Fase 10 na branch `cursor/cpmh-phase-10-776e`.
 | 8 Instalador | Configuração NSIS escrita. Não executada e não testada em Windows. |
 | 9 Validação final | Parcial. Os testes deste ambiente passaram. Windows, precisão estatística e Argos continuam em aberto. |
 | 10 Integridade, tradução, distribuição e revisão | A revisão chega aos cinco formatos. Os modos de tradução são únicos. O overlay foi medido no Chrome. O instalador Windows segue não testado. Argos segue ausente. |
+| 10.5 Benchmark SciELO | Feito em 20 de novembro de 2026. O artigo de 27 páginas foi processado no backend real. A primeira passagem perdia texto em tabelas falsas; a correção subiu o recall do corpo para 0,9853. Decisão: resultado A, iniciar a Fase 11 sem aprovar o instalador. |
 
 ## Pendências
 
 - Produzir o backend congelado no Windows e rodar o NSIS numa instalação limpa. O spec e o workflow existem; nenhum dos dois foi executado aqui.
 - Instalar e medir Argos, ou outro tradutor local, antes de apresentar tradução neural. O estado atual é `unavailable`.
-- Medir OCR e tabelas num conjunto de referência externo. O conjunto desta fase tem 13 blocos sintéticos, 13 acertos, e não autoriza uma taxa geral.
+- Medir OCR num conjunto digitalizado. O artigo SciELO desta rodada é texto digital; o Tesseract não entrou. O conjunto sintético de layout continua em 13 de 13 e não autoriza uma taxa geral.
 - Abrir a janela Electron e conferir o overlay injetado. A medição atual usou o script no Chrome.
 
 ## Decisões

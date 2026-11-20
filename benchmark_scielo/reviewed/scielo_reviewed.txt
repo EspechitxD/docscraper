@@ -1,0 +1,585 @@
+ARTIGO
+
+Avaliação externa de escolas e sua relação com políticas e práticas inclusivas: uma revisão sistemática da literatura
+
+Jennifer Silva a Alexandre Ventura b Diana Oliveira c
+
+Resumo
+
+Este estudo pretende analisar o impacto da Avaliação Externa de Escolas (AEE) na promoção de políticas e práticas educativas inclusivas. A pesquisa foi realizada nas bases de dados Scopus, Web of Science, Eric, SciELO e no repositório RCAAP, tendo sido considerados elegíveis 22 artigos. Para apoiar a análise dos dados qualitativos, recorreu-se ao software webQDA (revisado no benchmark). Os resultados obtidos referem-se à Europa. Alguns estudos identificam efeitos positivos da AEE, particularmente no que concerne à ação das lideranças e à avaliação da qualidade do Ensino, indiciando abertura para mudanças e melhorias. No entanto, há estudos que revelam constrangimentos, especialmente quando se trata de modificar práticas docentes e implementar estratégias inclusivas em contexto de sala de aula. Para além disso, há pouco conhecimento sobre o impacto efetivo da AEE no desenvolvimento da Educação inclusiva, na melhoria do funcionamento das escolas e na respectiva sustentabilidade, pelo que se afiguram como necessárias investigações mais aprofundadas. Palavras-chave: Avaliação Institucional. Avaliação Externa. Inspeção. Educação Inclusiva.
+
+a Universidade de Aveiro, Departamento de Educação e Psicologia, Centro de Investigação em Didática e Tecnologia na Formação de Formadores, EDUCA_Lab, Aveiro, Portugal. b Universidade de Aveiro, Departamento de Educação e Psicologia, Centro de Investigação em Didática e Tecnologia na Formação de Formadores, EDUCA_Lab, Aveiro, Portugal. c Universidade de Aveiro, Departamento de Educação e Psicologia, Centro de Investigação em Didática e Tecnologia na Formação de Formadores, EDUCA_Lab, Aveiro, Portugal.
+
+Recebido em: 12 out. 2024 Aceito em: 30 abr. 2025
+
+1 Introdução
+
+A investigação demonstra que a Avaliação Externa de Escolas (AEE) do Ensino não superior tem adquirido proeminência nas agendas políticas de governos, quer a nível nacional quer internacional, emergindo das políticas de descentralização e do movimento accountability (Afonso, 2010; Jones et al., 2017). A AEE é uma medida da Nova Gestão Pública, vista como um instrumento de aconselhamento estratégico para o desenvolvimento escolar, com o objetivo de promover a melhoria da qualidade educativa (Ehren, Altrichter, Mcnamara, O’Hara, 2013; Guzmán-Calle, Martín-Alonso, Rodríguez-Martínez, 2023; Taut, Rakoczy, 2016). De igual modo, procura fomentar mudanças nas organizações, considerando que elas advêm de iniciativas individuais dos atores escolares, estando associadas a uma abordagem construtivista (Gonçalves, Leite, Fernandes, 2015).
+
+Nas últimas duas décadas testemunhou-se, em muitos países, uma transição na estratégia de governação que combinou a descentralização do poder do governo central – associada ao reforço do controlo externo, por via de mecanismos de avaliação institucional e de resultados acadêmicos – com o alargamento mitigado da autonomia administrativa das escolas, traduzindo uma lógica de controlo interno. Essa descentralização dos sistemas educativos instigou um crescente interesse por responsabilização, capacidade de resposta e autoaperfeiçoamento das escolas, impulsionando a diversificação de metodologias de avaliação educacional e a formulação de abordagens teóricas e de investigação, no âmbito
+
+da eficácia e da melhoria das escolas (Afonso, 2010; Piezunka, 2019). A crescente descentralização implicou também um reforço dos níveis de confiança das instâncias que pilotam o sistema relativamente à capacidade das escolas e das suas lideranças para assumirem maior responsabilidade na operacionalização das políticas públicas.
+
+Através de uma revisão sistemática da literatura (RSL), apoiada em artigos científicos publicados em revistas especializadas em Educação, pretende-se neste artigo mapear e compreender a amplitude e profundidade dos estudos existentes, a nível nacional e internacional, sobre a interseção entre AEE, políticas educacionais e práticas pedagógicas inclusivas. Esta revisão constitui parte integrante de um projeto de investigação mais amplo, cujo propósito é analisar estudos empíricos relativos a abordagens de AEE e respectivos impactos na promoção da inclusão educacional. Pretende-se investigar se as práticas de AEE estão alinhadas com os objetivos das políticas educativas promotoras da inclusão, identificando áreas passíveis de melhorias. Também se almeja reconhecer tendências e desafios, sintetizando as percepções das lideranças, docentes e outros stakeholders, com vista a elaborar recomendações fundamentadas nos resultados aferidos.
+
+Por meio desta RSL, apresenta-se uma visão abrangente sobre como as políticas inclusivas são implementadas em diferentes contextos educativos, nomeadamente no português. Este enfoque pode proporcionar contributos relevantes para profissionais da Educação e decisores políticos, no sentido de melhorar os sistemas de avaliação de escolas, promovendo estratégias mais inclusivas e equitativas, além de se avaliar o efeito da avaliação externa na promoção
+
+desses objetivos.
+
+A questão de investigação orientadora deste estudo, doravante QI, é a seguinte: “Em que medida a AEE influencia a implementação de políticas e práticas inclusivas no Ensino não superior?”.
+
+Globalmente, a AEE institui-se como um procedimento que visa, entre outros aspectos, verificar a execução dos normativos legais em vigor. Nos últimos anos, as políticas inclusivas tornaram-se uma prioridade na agenda governativa de vários países, impondo-se como um desafio às comunidades educativas, nomeadamente às lideranças. A implementação dessas políticas representa uma oportunidade para cada escola desenvolver abordagens inovadoras, adaptadas às práticas de Ensino e de aprendizagem de todos os alunos, independentemente
+
+das capacidades, raça, etnia, classe social, gênero e religião (Seabra, Mouraz, Abelha, Henriques, 2020).
+
+É imperativo que a Educação inclusiva seja encarada como um compromisso ético, com a adoção de práticas alinhadas com o compromisso educacional, e como uma missão que tenciona envolver todos os atores educativos. Neste contexto, a avaliação de escolas é fundamental para identificar os pontos fortes e as áreas que necessitam de melhoria, colocando o currículo e as aprendizagens dos alunos no centro das atividades escolares (Ainscow, 2020; Carvalho, Azevedo, Vale, Fonseca, 2019). Segundo Ehren e Honingh (2012), é expectável que a ação avaliativa das inspeções escolares afiance que todos os alunos têm a oportunidade de atingir o seu potencial acadêmico, incentivando as escolas a melhorarem continuamente, promovendo um Ensino de qualidade.
+
+Após esta contextualização inicial, que apresenta e enquadra a QI que norteará este estudo, segue-se a exposição da metodologia adotada, na qual serão explicados os procedimentos utilizados, apresentados os dados coletados e sua subsequente análise. O artigo culmina com algumas considerações finais.
+
+2 Metodologia
+
+Esta RSL percorreu etapas claramente definidas, tendo-se determinado objetivos e procedimentos metodológicos validados em equipe.
+
+Nas pesquisas efetuadas, constatou-se que não existem RSL específicas sobre o
+
+tema em estudo, ou seja, sobre AEE e sua relação com políticas educacionais e práticas pedagógicas inclusivas.
+
+Pretendeu-se que esta RSL tivesse validade, confiabilidade e fosse passível
+
+de ser reproduzida (Vilelas, 2022). Deste modo, a existência de uma estrutura que orientasse as etapas da RSL foi também considerada essencial, tendo sido adaptada a metodologia sugerida por Xiao e Watson (2019): 1. Definição da QI; 2. Desenvolvimento e validação do protocolo da revisão; 3. Pesquisa de estudos em bases de dados; 4. Aplicação de critérios de inclusão de estudos; 5. Avaliação da qualidade dos estudos obtidos; 6. Extração dos dados; 7. Análise e síntese dos dados; 8. Apresentação da discussão e das conclusões.
+
+Antes de se iniciar a pesquisa, definiu-se explicitamente a QI, tendo sido utilizada a técnica da mnemônica Pico, de acordo com o descrito no Quadro 1.
+
+Quadro 1 - Mnemônica Pico adaptada a esta revisão sistemática da literatura
+
+AEE: Avaliação Externa de Escolas Fonte: Elaborado pelos autores e adaptado de Donato e Donato (2019)
+
+Como referido na introdução, a QI que norteou este estudo foi:
+
+“Em que medida
+
+a AEE influencia a implementação de políticas e práticas educativas inclusivas no Ensino não superior?”. Num segundo momento, foi desenvolvido e validado o
+
+“
+
+external evaluation”, “external evaluation of school
+
+“
+
+“
+
+protocolo da revisão, tendo sido registado na plataforma Open Science Framework
+
+(OSF) como um projeto de pesquisa. Constatou-se que se trata de um estudo original e autêntico, disponível em: https://osf.io/k3abj.
+
+Na etapa seguinte, referente à pesquisa de estudos em bases de dados e outras fontes eletrônicas, foi solicitado apoio a duas técnicas superiores da biblioteca da universidade à qual os investigadores estão filiados, de forma a garantir que
+
+os critérios adotados na pesquisa estivessem ajustados aos objetivos do estudo, procurando fortalecer a integridade da pesquisa.
+
+Optou-se por uma pesquisa sistemática e de periodicidade quinzenal, tendo sido
+
+iniciada em novembro de 2023 e concluída em finais de junho de 2024.
+
+A definição dos termos de pesquisa foi feita com base na terminologia do Eric
+
+Thesaurus e teve por base a QI. Definiram-se conjuntos de palavras-chave como
+
+”, “
+
+school inspection” e
+
+educational policies”, constituindo-se como critérios de inclusão. Foi usado o conceito “Higher Education” como critério de exclusão, de forma a não serem contemplados estudos sobre a realidade do Ensino Superior.
+
+A pesquisa foi realizada nas bases de dados: Scopus, Web of Science, Eric e Scientific Electronic Library Online (SciELO). Por sugestão das técnicas da biblioteca, foi também realizada pesquisa no repositório científico de acesso aberto de Portugal (RCAAP). Nas bases Scopus, Web of Science e Eric, os termos foram definidos em inglês, por ser o idioma da busca. No portal SciELO e no RCAAP, a língua portuguesa foi a utilizada.
+
+A procura foi circunscrita a artigos científicos, de âmbito nacional e internacional, tendo-se optado por não estabelecer limitação temporal nem geográfica, de modo a identificar quando e onde começaram a surgir estudos sobre o tema em análise. Da mesma forma, não foram impostas restrições quanto aos idiomas da pesquisa, com o intuito de ampliar a representatividade da literatura encontrada.
+
+Foram definidos os seguintes critérios de inclusão: i) tipos de publicação
+
+artigos”, “artigos de revisão” e “comunicação em conferência”; ii) com revisão por pares; iii) sem limitação temporal; iv) sem limitação geográfica; e v) estudos em qualquer língua.
+
+Aquando da leitura integral e análise, foram estabelecidos como critérios de
+
+exclusão: i) estudos realizados fora da Europa; ii) estudos sem a apresentação clara de dados empíricos; iii) estudos com focos de pesquisa distintos (por exemplo, sobre estabelecimentos de Ensino Superior, instituições não educativas).
+
+O Quadro 2 apresenta um resumo dos procedimentos adotados na pesquisa da literatura. O número de documentos registados corresponde à última pesquisa (junho de 2024).
+
+Quadro 2 - Resumo dos procedimentos adotados na pesquisa da literatura
+
+SciELO: Scientific Electronic Library Online; RCAAP: Repositório científico de acesso aberto de Portugal Fonte: Elaborado pelos autores (2024)
+
+O processo de avaliação da qualidade dos estudos encontrados foi feito pelos autores deste estudo, de forma independente, tendo as diferenças sido reconciliadas por mútuo acordo. Com recurso ao Excel, foi estabelecida uma checklist com os elementos necessários para um estudo com qualidade, tendo por base “Os critérios
+
+3 Resultados
+
+de avaliação da qualidade dos estudos de Bugalho e Carneiro em 2004” (Vilelas, 2022). A referida checklist, com dez pontos de análise, incidiu na
+
+“
+
+validade dos
+
+resultados”, na “importância dos resultados” e na “aplicabilidade dos resultados”. Cada ponto foi avaliado com “sim”, “não” ou “não aplicável”. Os estudos incluídos nesta revisão reuniram mais de 50% dos critérios definidos.
+
+Foi apurado um total de 75 documentos, que foram exportados para o software de gestão de referências bibliográficas Mendeley.
+
+Foram eliminados oito estudos duplicados. Depois, fez-se a leitura e avaliação dos títulos e dos resumos para aferir a elegibilidade dos estudos obtidos. Foram
+
+excluídos 25 estudos, por não estarem relacionados com o tema e os objetivos desta investigação e/ou por não incluírem uma descrição sobre a recolha e análise de dados empíricos. Após a leitura integral dos textos, houve exclusão de mais 20 documentos, por não corresponderem ao tema e aos interesses desta investigação.
+
+Foram incluídos na revisão, constituindo o corpus de análise, um total de 22
+
+artigos, 59,0% escritos em inglês (n = 13), 36,4% em português (n = 8) e 4,6% em alemão (n = 1). O procedimento de seleção dos documentos desta RSL se baseou nas recomendações do PRISMA (Page et al., 2021), pelo que se construiu o fluxograma apresentado na Figura para expor os procedimentos e resultados.
+
+Figura - Fluxograma para expor os procedimentos e resultados
+
+Fonte: Elaborada pelos autores e adaptado de Page et al. (2021)
+
+Em cada etapa (identificação, rastreio e inclusão) do fluxograma mostra-se o percurso metodológico, facilitando a compreensão dos estudos selecionados e que constituíram o corpus de análise.
+
+Em seguida, procedeu-se à extração de dados de cada estudo incluído nesta RSL.
+
+Seguindo as orientações de Donato e Donato (2019), elaborou-se uma tabela, numa folha do Excel, que reuniu as seguintes informações: i) nome de quem realizou a extração de dados; ii) data da leitura e extração de dados; iii) elementos identificativos do estudo (título, autor(es), ano de publicação, país(es) a que se refere o estudo, objetivos, metodologia adotada, participantes, intervenções e principais resultados). Foi uma síntese que permitiu sumariar, integrar, combinar e comparar os resultados.
+
+Os 22 estudos foram também importados para o software de apoio de análise qualitativa de dados webQDA. Sistematizaram-se os anos de publicação, os autores e as revistas em que foram publicados, conforme apresentado no Quadro 3.
+
+Quadro 3 - Artigos, autores, ano de publicação e revistas
+
+Continua
+
+Continuação
+
+Fonte: Elaborado pelos autores (2024)
+
+O corpus de análise é composto por estudos publicados entre 2010 e 2023. Constatou-se que o maior número de publicações diz respeito aos anos de 2015
+
+(n = 3), 2016 (n = 3) e 2022 (n = 3). Alguns artigos compartilham autores comuns, como M.C.M. Ehren (estudos A02, A04 e A08); F. Seabra (A07, A18, A21 e A22); J. O
+
+Hara (A04 e A08); J. Pacheco (A07, A09, A13 e A22); M. McNamara (A04, A08 e A14); e Ólafsdóttir, Jónasson e Sigurðardóttir (A19 e A20).
+
+´
+
+Relativamente às revistas e aos jornais de especialidade, conforme se pode observar no Quadro 3, a revista Studies in Educational Evaluation é a que publicou o maior número de artigos do corpus de análise (A02, A08, A17 e A20), representando 18,2% do total (n = 4). Os restantes artigos encontram-se distribuídos um (n = 1) por revista.
+
+Os estudos selecionados abrangem exclusivamente países da Europa (Alemanha, Áustria, Chipre, Irlanda, Islândia, Países Baixos, Portugal, Reino Unido, República Checa e Suécia). A maior parte dos estudos, um total de dez, foca a AEE em Portugal (A03; A06; A07; A09: A12; A13; A16; A18; A21; A22). Há dois estudos (A04; A08) que comparam abordagens de AEE em seis países (Países Baixos, Inglaterra, Suécia, Irlanda, Áustria e República Checa). Quatro estudos abordam a AEE na Alemanha (A05; A15; A10; A17) e outros dois se referem à Islândia (A19; A20). Um dos estudos faz referência à Irlanda (A14); outro aos Países Baixos (A02); outro é referente ao Reino Unido (A11) e há um respeitante ao Chipre (A01).
+
+Quanto à natureza metodológica, predominam os estudos qualitativos (n = 12), com um total de 54,5% (A01; A02; A03; A04; A09; A11; A12; A15; A18; A20; A21; A22). Os estudos quantitativos (n = 5) constituem cerca de 22,7% (A06; A07; A08; A13; A19); e em igual percentagem (22,7%) e número (n = 5) surgem os estudos mistos (A05; A10; A14; A16; A17). Quanto à tipologia dos estudos, de acordo com o referido pelos próprios autores, 16 são apresentados como estudos exploratórios (A03; A05; A06; A07; A10; A11; A13; A14; A15; A16; A17; A18; A19; A20; A21; A22), três como estudos comparativos (A02; A04; A08), dois como estudos de caso (A01; A12) e um como metaestudo (A09).
+
+Todos os estudos selecionados fundamentam-se em pesquisas empíricas e realizam análise documental. Porém, os procedimentos de análise e a tipologia dos documentos nem sempre são apresentados de forma explícita. Nos estudos em que essa informação é fornecida, geralmente são referidos documentos estruturantes das escolas avaliadas, relatórios internos, relatórios elaborados pela Inspeção e/ou normativos legais pertinentes.
+
+Com recurso exclusivo à análise de relatórios elaborados pela Inspeção, existem
+
+quatro estudos (A03; A18; A21; A22) – todos sobre o contexto português. Num estudo é referido que os relatórios da Inspeção foram analisados, mas foram também realizadas entrevistas aos diretores e docentes (A20). Em cinco estudos (A04; A11; A12; A14; A15) foram feitas entrevistas a inspetores (n = 3), diretores escolares (n = 1) e docentes (n = 1); em seis estudos (A06; A07; A08; A13; A16; A19) a opção recaiu em inquéritos por questionário dirigidos a diretores (n = 4), a docentes (n = 1) e a diretores e a docentes (n = 1). Dois estudos conjugaram inquéritos por questionário e observação de aulas, sendo o público-alvo constituído por docentes (A05; A17).
+
+Relativamente à apresentação das limitações dos estudos, seis fazem essa referência. Dois artigos propõem que se faça um estudo sistemático e padronizado, com estratégias e instrumentos devidamente validados para que o processo de AEE
+
+seja fiável (A05; A10). Outros dois estudos (A01; A12) apresentam limitações associadas à natureza dos estudos de caso, sendo os resultados não generalizáveis. E noutros dois estudos (A08; A19) é referida a limitação de terem participado apenas diretores, inspetores ou professores.
+
+Dos 22 artigos analisados, cinco apresentam sugestões de estudos futuros. No artigo A05 propõe-se a realização de um estudo sistemático sobre estratégias eficazes para integrar diferentes fontes de dados, visando aprimorar o processo de AEE; nos artigos A08 e A19 recomendam-se pesquisas que incorporem outras fontes de informação, como a opinião de alunos, pais e comunidade educativa sobre o impacto da Inspeção na melhoria das escolas. O estudo A10 refere a escassez de estudos que abordem a confiabilidade e validade dos instrumentos usados na avaliação da qualidade das escolas, no contexto da AEE, destacando a necessidade de mais investimentos nessa área. Por fim, os autores do artigo A20 salientam a importância de uma abordagem longitudinal para determinar o impacto a longo prazo das AEE, visando garantir a sustentabilidade e a eficácia na implementação de melhorias.
+
+Verificou-se que todos os textos focam a AEE, abordando as políticas educacionais numa perspectiva global. Apenas sete evidenciam as políticas e práticas inclusivas
+
+(A12; A13; A15; A18; A20; A21; A22).
+
+Todos os artigos foram analisados seguindo o paradigma interpretativo e a técnica de análise de conteúdo. Para tal, optou-se pelo critério de categorização
+
+semântica (Bardin, 2016), tendo-se estabelecido as seguintes categorias de análise: i) Abordagens de AEE na Europa; ii) Impacto da AEE nas práticas inclusivas (tendências e desafios); iii) Contribuições para melhorar a AEE e as práticas inclusivas.
+
+Na seção seguinte, procedemos à apresentação e discussão dos resultados da investigação, alinhando-os com as categorias anteriormente mencionadas. De igual modo, responde-se à QI que norteou esta RSL.
+
+4 Discussão
+
+Esta seção se estrutura em três subseções: 4.1 Abordagens de AEE na Europa; 4.2
+
+Impacto da AEE nas práticas inclusivas (tendências e desafios); 4.3 Contribuições para melhorar a AEE e as práticas inclusivas. A Discussão desenvolve-se em diálogo com a literatura especializada e com os objetivos deste estudo.
+
+4. 1 Abordagens de AEE na Europa
+
+Uma análise comparativa entre países, realizada em estudos que constituíram
+
+o corpus de análise desta RSL (Ehren, Altrichter, Mcnamara, O
+
+’Hara, 2013;
+
+Lankes, Vaccaro, Gegenfurtner, 2013; Ólafsdóttir, Jónasson, Sigurðardóttir, Aspelund, 2022), revelou existirem semelhanças nas abordagens de AEE na Europa, observando-se padrões, procedimentos e metodologias similares. São abordagens que pretendem avaliar a qualidade da Educação mediante a coleta de evidências, como estatísticas de desempenho dos alunos, entrevistas e inquéritos (a lideranças, professores e outros), observação de aulas, para além de informações suplementares obtidas por análise documental. É um processo que tenciona ser objetivo, válido e confiável, sendo os resultados apresentados em relatórios que identificam pontos fortes e pontos fracos do sistema educacional, visando promover iniciativas de melhoria contínua. As dissemelhanças residem nas categorias de avaliação, na duração do processo e na localização e proveniência das entidades responsáveis por essa avaliação. Este cenário é explicado pela existência de influências comuns na definição das políticas educativas, tais como a globalização, as comparações internacionais de
+
+sistemas educacionais, exemplificadas pelo Programme for International Student Assessement (PISA), pelo Trends in International Mathematics and Science Study (TIMSS), bem como pela participação em organismos internacionais como a The Standing International Conference of Inspectorates (SICI) e a União Europeia (Brown et al., 2018).
+
+Autores como Jones et al. (2017), Oliveira e Ventura (2015), Sousa, Costa, Marques e Pacheco (2016) e Miranda, Seabra e Pacheco (2023) referem que a escola passou a ser avaliada não só pela necessidade de prestação de contas e de responsabilização, mas também para dar a conhecer o seu desempenho organizacional – incluindo os resultados de aprendizagem dos alunos – em consonância com padrões internacionais vigentes, promovidos por organismos transnacionais como a Organização para a Cooperação do Desenvolvimento Econômico (OCDE) e a Organização das Nações Unidas para a Educação, Ciência e Cultura (Unesco). Deste modo, a definição dos critérios de avaliação das escolas tem seguido abordagens pragmáticas e mensuráveis, como evidenciado em relatórios da OCDE e da Eurydice1
+
+.
+
+Nos últimos 20 anos, em muitos países, reformas educacionais têm sido impulsionadas pela globalização, descentralização e implementação de medidas de avaliação. São mudanças que têm proporcionado desafios relacionados com a garantia de qualidade, inclusão e equidade na Educação. Portanto, uma análise macro destas reformas deve ser complementada por uma abordagem micro, centrando-se em aspectos específicos, conforme sugerem Brauckmann e Pashiardis
+
+(2010) e Ólafsdóttir, Jónasson, Sigurðardóttir e Aspelund (2022).
+
+Dois estudos comparativos, que foram objeto de análise nesta RSL (Ehren, Altrichter, Mcnamara, O’Hara, 2013; Gustafsson et al., 2015), demonstram que nos seis países considerados (Inglaterra, Países Baixos, Suécia, Irlanda, Áustria e República Checa) existem analogias na AEE: conciliam a responsabilização, a supervisão e o estímulo ao desenvolvimento. Verifica-se a qualidade da Educação, incidindo no desempenho dos alunos, no Ensino, na organização e liderança, observando-se as escolas e as aulas in loco. Constata-se que os programas de AEE incluem expetativas quanto ao que se entende por Educação de qualidade,
+
+1 Eurydice é uma rede da Comissão Europeia que fornece informações e análises comparadas sobre os sistemas e políticas de Educação na Europa. Mais informações disponíveis em: https://eurydice.eacea.ec.europa.eu/.
+
+expressas através de referenciais definidos pelas entidades responsáveis pela
+
+avaliação externa institucional. As escolas devem alinhar os seus objetivos e métodos de trabalho para alcançar os padrões de qualidade exigidos. Relativamente às diferenças existentes, elas residem na periodicidade das AEE e na abrangência (áreas gerais ou específicas).
+
+Ehren, Altrichter, Mcnamara e O’Hara (2013) referem que, na Inglaterra, o Office for Standards in Education Children
+
+s Services and Skills (OFSTED)
+
+´
+
+realiza visitas regulares às escolas, priorizando as que têm piores resultados. O mesmo acontece na Suécia, sendo também preocupação da Inspeção verificar se a equidade e inclusão dos alunos estão a ser salvaguardadas.
+
+Na Irlanda, República Checa e Áustria, a AEE abarca sempre todas as áreas e ocorre normalmente de quatro em quatro anos, podendo ser mais regulares quando se focam em situações específicas (Ehren, Altrichter, Mcnamara, O’Hara, 2013).
+
+No estudo de Brown et al. (2018), é referido que a AEE na Irlanda está em sintonia com práticas observadas em outros países. A abordagem da Inspeção concentra-se mais em ajudar as escolas a elevar a qualidade educacional, através de medidas e processos internos bem definidos.
+
+No Reino Unido, a AEE faz parte da cultura de responsabilização das escolas. Cada nação apresenta variações na configuração e áreas de incidência dos órgãos responsáveis pela AEE. Por exemplo, na Inglaterra, a responsabilidade é do OFSTED; na Escócia, a AEE é realizada pelo Education Scotland e na Irlanda do Norte pela Education and Training Inspectorate. Nestes países, a autoavaliação e a avaliação externa assumem funções distintas, sendo a primeira formativa e
+
+a segunda formativa e sumativa (Hopkins et al., 2016).
+
+Em Portugal, segundo Gonçalves, Leite e Fernandes (2015), Nogueira, Gonçalves e Costa (2019) e Oliveira (2017), foi a Lei nº 31/2002, de 20 de dezembro, que conferiu importância política à AEE (Portugal, 2002). Em 2006, a Inspeção-Geral da Educação e Ciência (Igec) lançou o Programa de Avaliação Externa das Escolas (Paee), visando melhorar as instituições educacionais, promover o progresso das aprendizagens e resultados dos alunos, estabelecer vínculos com processos de autoavaliação e contribuir para a regulação do sistema educativo. O Paee adotou um referencial composto por domínios e emprega métodos diversos para recolha e análise de dados (análise documental, análise estatística, observação direta de instalações, equipamentos e ambientes educativos e inquéritos por questionário e por entrevista). Tratou-se de um referencial influenciado por práticas internacionais, sobretudo europeias, tendo as suas origens no projeto escocês How Good is Our School, concebido em 1991 e revisto em 2002.
+
+Para além deste projeto, Oliveira (2017), Sousa e Pacheco (2018) e Ventura (2006) destacam também o contributo do anterior programa da Inspeção-Geral da Educação: o Programa de Avaliação Integrada das Escolas, desenvolvido entre 1999 e 2002, assim como a metodologia proposta pela European Foundation for Quality Management, para o desenvolvimento do atual Paee. O Conselho Nacional de Educação tem sustentadamente vindo a acompanhar os processos de avaliação de escolas, emitindo pareceres com propostas de melhoria do sistema educativo português.
+
+Desde 2018, em Portugal, está em curso a implementação do 3º ciclo de AEE pela Igec, sendo um programa destinado a verificar a aplicação das políticas educativas em vigor, propondo melhorias contínuas. Este ciclo se diferencia dos dois anteriores por, entre outros aspectos, atribuir maior ênfase aos processos de Ensino e aprendizagem: tanto porque destaca a importância da promoção da equidade e inclusão dos alunos, como porque introduz a observação da prática educativa e letiva. Durante essa observação, que abrange diferentes níveis de Ensino, é concedida especial atenção à interação pedagógica,
+
+às competências abordadas e à promoção da inclusão de todos os alunos (Lopes, Oliveira, 2021).
+
+4. 2 Impacto da AEE nas políticas e práticas inclusivas (tendências e desafios)
+
+Segundo Gustafsson et al. (2015), constata-se uma falta de clareza quanto à influência da AEE na modificação das práticas de Ensino e no desempenho dos alunos. O potencial sucesso da AEE está intimamente ligado às mudanças que devem ocorrer, sobretudo ao nível da sala de aula e das práticas pedagógicas dos professores, requerendo orientações e apoios adequados por parte das lideranças (Gustafsson et al., 2015; Rocha, 2012; Wagner, 2020). Nesse sentido, autores como Gonçalves, Leite e Fernandes (2015) referem que as melhorias só advirão quando se verificarem “mudanças individuais dos intervenientes, correspondendo a uma pedagogia construtivista, reflexiva e crítica, na qual a avaliação é uma co-construção assente no conforto, na transformação e na síntese dos referenciais internos e externos, num processo em permanente elaboração” (p. 291).
+
+Hopkins et al. (2016) mencionam que os professores consideram que a AEE traz poucas melhorias na qualidade do Ensino e da aprendizagem, sendo muitas vezes as aulas ensaiadas, usando estratégias propostas pelas lideranças para o momento da visita da Inspeção. Também Piezunka (2019) ressalta a tendência das escolas em projetar uma imagem positiva, ocultando as dificuldades que enfrentam. Nesta perspectiva, Brunsson (2006) descreve esta aparente adesão aos padrões exigidos como “hipocrisia organizacional”, evidenciando que as organizações frequentemente recorrem a discursos e práticas simbólicas para satisfazer critérios externos, sem que haja mudanças efetivas nas suas práticas estruturais.
+
+Neste estudo, identificaram-se algumas evidências sobre o impacto da AEE
+
+nas políticas e práticas inclusivas, embora essas informações sejam escassas. Observou-se, também, que a Educação inclusiva tem sido destacada como uma prioridade nas políticas educativas de diversos países da Europa.
+
+Conforme mencionado por Ainscow (2020), a implementação de um sistema educacional inclusivo enfrenta desafios significativos, requer “alavancas” (ações para mudar comportamentos numa organização) e uma mudança de culturas e práticas. É necessário que as escolas desenvolvam estratégias educativas adequadas a todos os alunos, especialmente aos mais vulneráveis, mitigando barreiras à aprendizagem.
+
+Carvalho, Azevedo, Vale e Fonseca (2019) e Seabra, Mouraz, Abelha e Henriques (2020) referem que a Educação inclusiva é um processo ainda em construção, que visa responder às necessidades individuais de todos os alunos, transcendendo as abordagens centradas apenas em alunos com deficiências ou dificuldades de aprendizagem. O currículo e as aprendizagens de todos os alunos passaram a ocupar um lugar essencial nas agendas educativas à escala global e nacional, representando um grande desafio, tanto para professores, como para as lideranças, por exigir uma mudança profunda de práticas.
+
+As pesquisas analisadas, e que constituíram o corpus deste estudo, concentram-se principalmente nas políticas e práticas inclusivas em Portugal. Por esse motivo, foi dada especial atenção ao impacto da AEE no contexto português.
+
+Foi a partir de 2018 que em Portugal se verificou um aumento significativo do compromisso com a inclusão por parte da administração central e das organizações escolares, com vista a atingir as metas de desenvolvimento sustentável estabelecidas pela Agenda 2030 da Organização das Nações Unidas. Garantir que o sucesso
+
+escolar deve ser para todos se constituiu como o principal objetivo das políticas de plasmada no documento “Âmbito, princípios e objetivos
+
+Educação, tendo o Decreto-Lei nº 54/2018, de 6 de julho, plasmado essa viragem, acompanhando tendências a nível internacional (Portugal. 2018; Miranda, Seabra, Pacheco, 2023; Seabra, Mouraz, Abelha, Henriques, 2020).
+
+Tem sido concedida às escolas maior autonomia administrativa e curricular para permitir a implementação de políticas promotoras de uma Educação de qualidade e equidade, devendo o Perfil dos Alunos à Saída da Escolaridade Obrigatória
+
+ser alcançado por todos (Portugal, 2017). A centralidade do currículo e o desenvolvimento das competências dos alunos passaram a ser grandes desafios, nomeadamente para as lideranças escolares (Lopes, Oliveira, 2021; Seabra, Abelha, Henriques, Mouraz, 2022).
+
+No atual 3º ciclo avaliativo do Paee, a AEE passou a ser desenvolvida por equipes
+
+de dois inspetores da Igec e dois peritos externos (docentes e/ou investigadores do Ensino Superior), tendo-se verificado uma maior valorização dos aspetos processuais e práticos. Nas escolas não agrupadas, com menos de 500 alunos e/ ou um nível de Ensino, as equipes são constituídas por um inspetor da Igec e um perito externo (Inspeção-Geral da Educação e Ciência, 2022; Miranda, Seabra, Pacheco, 2023).
+
+De acordo com Fialho et al. (2020), as áreas-chave do Programa do XXI Governo Constitucional para a área da Educação passaram a ser: i) Sucesso escolar e educativo; ii) Escola e Educação para todos; iii) Currículo (sustentado nas Aprendizagens Essenciais); e iv) Atualização (inovação educativa). Considerou-se importante que todos os alunos cumprissem a escolaridade obrigatória2
+
+, obtendo
+
+um nível de formação que lhes facilitasse a inclusão social. Passou a ser dado especial destaque à intrínseca associação entre o Ensino e a aprendizagem, sendo valorizadas práticas pedagógicas inclusivas, metodologias ativas e experimentais. Valorizou-se, igualmente, a finalidade formativa da avaliação, estimulando-se a articulação entre docentes e o trabalho colaborativo.
+
+Uma análise dos documentos de enquadramento do 3º ciclo avaliativo do Paee, disponíveis no site da Igec, permite compreender que a inclusão aparece claramente
+
+”
+
+, no objetivo:
+
+“Promover
+
+a qualidade do Ensino, das aprendizagens e a inclusão de todas as crianças e de
+
+todos os alunos” (Inspeção-Geral da Educação e Ciência, 2019). Também na versão atualizada do Quadro de Referência, é possível identificar a referência à
+
+2 Em Portugal, a escolaridade obrigatória tem início no ano em que a criança completa seis anos de idade e prolonga-se até aos 18 anos ou até à conclusão do Ensino Secundário (12º ano) – Decreto-Lei nº 176/2012, de 2 de agosto.
+
+inclusão nos quatro domínios: Autoavaliação, Liderança e Gestão, Prestação do
+
+Serviço Educativo e Resultados (Inspeção-Geral da Educação e Ciência, 2023).
+
+Um estudo realizado por Seabra, Mouraz, Abelha e Henriques (2020), com o objetivo de entender como são percebidas as questões da equidade e inclusão nos relatórios da Igec, revelou que foi a partir do 3º ciclo avaliativo que as questões da equidade e inclusão passaram a assumir importância redobrada no Quadro de Referência. Verifica-se que é retomada e reforçada uma concepção ampla de inclusão, que contempla todos os alunos, especificando os que merecem atenção prioritária, nomeadamente crianças em risco, em situação de insucesso escolar, emigrantes, provenientes de grupos culturais diversos, com dificuldades de aprendizagem e deficiências.
+
+Na investigação efetuada por Miranda, Seabra e Pacheco (2023), reconhece-se que o 3º ciclo se destaca dos anteriores pela importância dada ao envolvimento dos professores na qualidade educativa, bem como a introdução do conceito de regulação por pares e promoção do trabalho colaborativo.
+
+4. 3 Contribuições para aprimorar a AEE e as práticas inclusivas
+
+Sousa e Pacheco (2018) salientam que muitos professores não percepcionam a AEE como um instrumento para o desenvolvimento da prática profissional. Por sua vez, Seabra e Pacheco (2015) propõem uma reavaliação dos processos da AEE, com foco no trabalho realizado na sala de aula e no envolvimento da comunidade escolar. Wagner (2020) sugere a continuidade do acompanhamento do trabalho escolar após a visita da Inspeção, permitindo a reflexão, o planeamento e a implementação de melhorias.
+
+De forma convergente, Guzmán-Calle, Martín-Alonso e Rodríguez-Martínez
+
+(2023) defendem que a AEE deve ser adaptada às especificidades de cada contexto escolar, contemplando apoio formativo direcionado aos docentes e incentivando práticas colaborativas e reflexivas entre os profissionais. Os autores salientam ainda que muitos docentes continuam a orientar as suas práticas pedagógicas para a preparação dos alunos relativamente a exames externos, o que pode comprometer a implementação dos princípios da Educação inclusiva.
+
+Os estudos de Quintas, Gonçalves e Valadas (2017) e Carvalho, Azevedo, Vale e Fonseca (2019) fornecem informações importantes sobre os desafios enfrentados pelo sistema educativo português relativamente à Educação inclusiva. O primeiro estudo evidencia a preocupação dos diretores escolares com a dificuldade de garantir a igualdade de oportunidades a todos os alunos, devido à insuficiência de recursos humanos. O segundo, conduzido por Carvalho, Azevedo, Vale e
+
+Fonseca (2019), amplia essa visão, ao destacar a percepção dos professores sobre os aspectos favoráveis e desfavoráveis relacionados com a promoção da diversidade e inclusão nas escolas portuguesas. Identificam-se comumente obstáculos como o elevado número de alunos por turma, a falta de recursos e de formação dos professores. Sugere-se a promoção de um entendimento partilhado sobre a inclusão e realização de discussões abertas sobre as forças e debilidades em cada contexto escolar, visando informar políticas futuras e promover melhorias nas escolas. Neste contexto, a AEE pode desempenhar um papel importante para a resolução desses problemas, colaborando com as lideranças escolares e o poder central.
+
+5 Considerações Finais
+
+Esta RSL permitiu identificar uma lacuna significativa de estudos que abordem especificamente o impacto da AEE na promoção de políticas e práticas inclusivas no Ensino não superior. Por isso, considera-se importante a realização de
+
+investigações mais aprofundadas, capazes de oferecer insights para (in)formar políticas promotoras de práticas inclusivas mais eficientes e sustentáveis.
+
+Respondendo à QI que norteou este estudo –
+
+“Em que medida a AEE influencia
+
+a implementação de políticas e práticas educativas inclusivas no Ensino não superior?” –, conclui-se que ainda não existem resultados concretos sobre essa influência da AEE. No entanto, há evidências de um caminho iniciado, nomeadamente em Portugal.
+
+Constata-se que o Paee, no atual 3º ciclo avaliativo, atribui importância à inclusão escolar, contemplando temas como a “equidade e a inclusão” no seu Quadro de Referência. Esta ênfase pode induzir mudanças significativas nas práticas educativas e avaliativas, fomentando ambientes mais inclusivos e estratégias pedagógicas mais adequadas às necessidades individuais dos alunos.
+
+Num contexto mais abrangente, observa-se que a AEE tem exercido predominantemente um papel de indução, orientando as lideranças escolares na adoção de medidas de melhoria com base nos relatórios elaborados no seio da organização. No entanto, registam-se também desafios, como a dificuldade e/ou resistência de alguns professores na adoção de estratégias pedagógicas diferenciadas e inclusivas em contexto de sala de aula. Neste sentido, seria benéfico que a AEE assumisse também uma função mais proativa de responsabilização e orientação na necessidade de mudança, corroborando na promoção de formação, recursos e apoios necessários para impulsionar essas mudanças.
+
+Em alguns estudos, sugere-se a necessidade de capacitar as lideranças para serem mais ativas e inclusivas, orientando a comunidade escolar na promoção de um ambiente educacional que atenda à diversidade e às necessidades de todos os alunos. De igual modo, propõe-se a integração harmoniosa dos processos de
+
+avaliação (autoavaliação e externa) e a implementação de mecanismos de feedback transparentes, assim como a participação ativa de lideranças, professores e outros stakeholders, de forma a possibilitar a promoção de uma cultura de melhoria contínua de práticas inclusivas.
+
+Verifica-se, também, que a maioria das investigações consideradas neste estudo ocorre logo após as escolas receberem os relatórios da AEE, o que dificulta a avaliação da eficácia e da sustentabilidade das medidas de melhoria implementadas. Neste sentido, seria importante realizar estudos com uma abordagem longitudinal que permitam compreender o impacto a longo prazo das AEE, como sugerido
+
+por Ólafsdóttir, Jónasson e Sigurðardóttir (2022).
+
+Para finalizar, considera-se crucial que as escolas adotem uma postura construtiva
+
+perante os feedbacks da Inspeção. É importante que haja reflexão sobre as práticas implementadas e a adoção de uma cultura de aprendizagem contínua, com base nas fragilidades e sucessos identificados. Além disso, as escolas devem promover o trabalho colaborativo e implementar ações direcionadas para o aprimoramento de políticas e práticas relacionadas com a Educação inclusiva. Este processo deve ser conduzido dentro de uma cultura de planejamento estratégico e de avaliação, de forma a assegurar que as medidas adotadas estejam alinhadas com os objetivos de melhoria contínua do sistema educativo.
+
+External evaluation of schools and its relationship with inclusive policies and practices: a systematic review of the literature
+
+Abstract
+
+This study aims to analyze the impact of External School Evaluation (ESE) on the promotion of inclusive educational policies and practices. The research used the Scopus, Web of Science, ERIC, and SciELO databases and the RCAAP repository, resulting in 22 eligible articles. WebQDA software was used to support the analysis of qualitative data. The obtained results pertain to Europe. Some studies have identified positive effects of ESE, particularly concerning the actions of school leadership and the evaluation of teaching quality, indicating an openness to change and improvement. However, some studies have revealed challenges, especially in terms of modifying teaching practices and implementing inclusive strategies in classroom settings. Furthermore, there is limited knowledge about the actual impact of ESE on the development of inclusive education, the improvement of school functioning and its sustainability, indicating that more in-depth
+
+investigations are necessary.
+
+Keywords: Institutional Evaluation. External Evaluation. Inspection. Inclusive Education.
+
+Evaluación externa de escuelas y su relación con políticas y prácticas inclusivas: una revisión sistemática de la literatura
+
+Resumen
+
+Este estudio pretende analizar el impacto de la Evaluación Externa de Escuelas (EEE) en la promoción de políticas y prácticas educativas inclusivas. La investigación se realizó en las bases de datos ERIC, SciELO, Scopus y Web of Science y en el repositorio RCAAP, habiéndose considerado elegibles 22 artículos. Para apoyar el análisis de los datos cualitativos, se utilizó el software webQDA. Los resultados obtenidos se refieren a Europa. Algunos estudios han identificado efectos positivos de la EEE, particularmente en lo que respecta a la acción de los liderazgos y a la evaluación de la calidad de la enseñanza, indicando apertura a cambios y mejoras. Sin embargo, hay estudios que han revelado limitaciones, especialmente cuando se trata de modificar prácticas docentes e implementar estrategias inclusivas en el contexto del aula. Además, hay poco conocimiento sobre el impacto efectivo de la EEE en el desarrollo de la educación inclusiva, en la mejora del funcionamiento de las escuelas y en su sostenibilidad, por lo que se consideran necesarias investigaciones más profundas.
+
+Palabras clave: Evaluación Institucional. Evaluación Externa. Inspección. Educación Inclusiva.
+
+Referências
+
+AFONSO, A. J. Gestão, autonomia e accountability na escola pública portuguesa: breve diacronia. Revista Brasileira de Política e Administração da Educação, Brasília ,v. 26, n. 1, p. 13-30, 2010. https://doi.org/10.21573/vol26n12010.19678
+
+AINSCOW, M. Promoting inclusion and equity in education:
+
+lessons from international experiences. Nordic Journal of Studies in Educational Policy, Abingdon, v. 6, n. 1, p. 7-16, 2020. https://doi.org/10.1080/20020317.2020.1729587
+
+BARDIN, L. Análise de conteúdo. Lisboa: 70, 2016.
+
+BRAUCKMANN, S.; PASHIARDIS, P. The clash of evaluations: in search of the missing link between school accountability and school improvement: experiences from Cyprus. International Journal
+
+of Educational Management, Leeds, v. 24, n. 4, p. 330-350, 2010. https://doi.org/10.1108/09513541011045263
+
+BROWN, M. et al. Integrated co-professional evaluation? Converging
+
+approaches to school evaluation across frontiers. Australian Journal of Teacher Education, Joondalup, v. 43, n. 12, p. 74-90, 2018.
+
+BRUNSSON, N. A organização da hipocrisia: os grupos em acção: dialogar, decidir e agir. Porto: Asa, 2006.
+
+CARVALHO, M.; AZEVEDO, H.; VALE, C.; FONSECA, H. Diversity, inclusion, and education: challenges in perspective. In: THE INTERNATIONAL CONFERENCE ON EDUCATION AND
+
+NEW LEARNING TECHNOLOGIES, 11., 2019, Palma .Proceedings […]. Valencia: International Academy of Technology, Education and Development, 2019. p. 8157-8162.
+
+DONATO, H.; DONATO, M. Etapas na condução de uma revisão sistemática. Acta Médica Portuguesa, Lisboa, v. 32, n. 3, p. 227-235, 2019. https://doi.org/10.20344/amp.11923
+
+EHREN, M. C. M.; ALTRICHTER, H.; MCNAMARA, G.; O’HARA, J. Impact of school inspections on improvement of schools-describing assumptions on causal mechanisms in six European countries. Educational Assessment, Evaluation and Accountability, Amsterdam, v. 25, n. 1, p. 3-43, 2013. https://doi.org/10.1007/s11092-012-9156-4
+
+EHREN, M. C. M.; HONINGH, M. E. Risk-based school inspections in the Netherlands: a critical reflection on intended effects and causal mechanisms. Studies in Educational Evaluation, London, v. 37, n. 4, p. 239-248, 2012.
+
+https://doi.org/10.1016/j.stueduc.2012.02.001
+
+FIALHO, I. et al. O quadro de referência da avaliação externa das escolas, nos três ciclos avaliativos, no contexto das políticas educativas vigentes.
+
+In: PACHECO, J. A.; MORGADO, J. C.; SOUSA, J. R. (Orgs.). Avaliação institucional e inspeção: perspetivas teórico-conceptuais. Porto: Porto Editora, 2020. p. 63-100.
+
+GONÇALVES, E. F. P.; LEITE, C. M. F. A. F.; FERNANDES, P. T. Programa de avaliação externa das escolas em Portugal: uma análise focada na satisfação de líderes/gestores. Acta Scientiarum. Education, Maringá, v. 37, n. 3, p. 289-300, 2015. https://doi.org/10.4025/actascieduc.v37i3.26377
+
+GUSTAFSSON, J. E. et al. From inspection to quality: ways in which school inspection influences change in schools. Studies in Educational Evaluation, London, v. 47, p. 47-57, 2015.
+
+https://doi.org/10.1016/j.stueduc.2015.07.002
+
+GUZMÁN-CALLE, E.; MARTÍN-ALONSO, D.; RODRÍGUEZ-MARTÍNEZ, C. Las evaluaciones externas en España y sus consecuencias en las prácticas escolares y en la equidad. Ensaio: Avaliação e Políticas Públicas em Educação, Rio de Janeiro, v. 31, n. 119, p. 1-22, abr./jun. 2023. https://doi.org/10.1590/S0104-40362023003103821
+
+HOPKINS, E. et al. Teachers’ views of the impact of school evaluation and external inspection processes. Improving Schools, London, v. 19, n. 1, p. 52-61, 2016. https://doi.org/10.1177/1365480215627894
+
+INSPEÇÃO-GERAL DA EDUCAÇÃO E CIÊNCIA – IGEC. Terceiro ciclo de avaliação externa das escolas :âmbito, princípios e objetivos. Brasília: MINISTÉRIO DA EDUCAÇÃO ,2019 .Disponível em: https://www.igec.mec.pt/upload/AEE3_2018/AEE_3_Amb_princ_objetivos.pdf. Acesso: 2 mar. 2024.
+
+INSPEÇÃO-GERAL DA EDUCAÇÃO E CIÊNCIA – IGEC. Terceiro ciclo de avaliação externa das escolas :metodologia. Brasília: Ministério da Educação, 2022. Disponível em: https://www.igec.mec.pt/upload/AEE3_2018/AEE_3_ Metodologia_I.pdf. Acesso: 2 mar. 2024.
+
+NOGUEIRA, A.; GONÇALVES, M.; COSTA, J. A. Inspectorate
+
+INSPEÇÃO-GERAL DA EDUCAÇÃO E CIÊNCIA – IGEC. Terceiro ciclo de avaliação externa das escolas: quadro de referência. Brasília: Ministério da Educação, 2023. Disponível em: https://www.igec.mec.pt/upload/AEE3/ AEE_QR_2023.pdf. Acesso: 2 mar. 2024.
+
+JONES, K. et al. The unintended consequences of school inspection: the prevalence of inspection side-effects in Austria, the Czech Republic, England, Ireland, the Netherlands, Sweden, and Switzerland.
+
+Oxford Review of Education, Oxford, v. 43, n. 6, p. 805-822, 2017. https://doi.org/10.1080/03054985.2017.1352499
+
+LANKES, E. M.; VACCARO, D.; GEGENFURTNER, A. Which information sources do evaluation teams use for estimating instructional quality in external
+
+evaluations? Unterrichtswissenschaft, Frankfurt, v. 41, n. 3, 197-215, 2013. https://www.researchgate.net/publication/288366194
+
+LOPES, J. L.; OLIVEIRA, C. R. Inclusive education in Portugal: teachers’ professional development, working conditions, and instructional efficacy. Education Sciences, [S. l.], v. 11, n. 4, p. 1-15, 2021. https://doi.org/10.3390/educsci11040169
+
+MIRANDA, H. M. C. G.; SEABRA, F.; PACHECO, J. A. Avaliação externa das escolas, regulação por pares, trabalho colaborativo e qualidade educativa: qual a relação? Praxis Educativa, Ponta Grossa, v. 18, p. 1-18, 2023. https://doi.org/10.5212/PraxEduc.v.18.21863.065
+
+’
+
+s
+
+intervention in external school assessment: a study based on school principals perceptions. Revista Portuguesa de Educação, Braga, v. 32, n. 2, p. 171-187, 2019. https://doi.org/10.21814/RPE.14812
+
+ÓLAFSDÓTTIR, B.; JÓNASSON, J. T.; SIGURÐARDÓTTIR, A. K. Use and impact of external evaluation feedback in schools. Studies in Educational Evaluation, London, v. 74, p. 1-15, 2022. https://doi.org/10.1016/j.stueduc.2022.101181
+
+ÓLAFSDÓTTIR, B.; JÓNASSON, J. T.; SIGURÐARDÓTTIR, A. K.; ASPELUND, T. The mechanisms by which external school evaluation in Iceland influences internal evaluation and school professionals’ practices. Nordic Journal of Studies in Educational Policy, [S. l.], v. 8, n. 3, p. 209-224, 2022. https://doi.org/10.1080/20020317.2022.2076376
+
+OLIVEIRA, D. S. Qualidade da educação em Portugal: o papel da avaliação externa de escolas. Tese (Doutorado) – Universidade de Aveiro, Aveiro, 2017. https://ria.ua.pt/handle/10773/41442
+
+OLIVEIRA, D.; VENTURA, A. Qualidade da educação em Portugal: o papel da AEE. In: MOURAZ, A.; PACHECO, J. A.; VALADAS, S. T. (Orgs.). Avaliação externa de escolas do ensino não superior: coordenadas e processos de um projeto de investigação. Porto: Universidade do Porto, 2015. p. 39-46.
+
+PAGE, M. J. et al. The PRISMA 2020 statement: an updated guideline for reporting systematic reviews. BMJ, London ,v. 372, n. 71, p. 1-9, 2021.
+
+https://doi.org/10.1136/bmj.n71
+
+PIEZUNKA, A. Struggle for acceptance: maintaining external school evaluation as an institution in Germany. Historical Social Research, Köln, v. 44, n. 2, p. 270-287, 2019. https://doi.org/10.12759/hsr.44.2019.2.270-287
+
+PORTUGAL. Presidência do Conselho de Ministros. Decreto-lei n.º 54, de
+
+6 de julho de 2018. Estabelece os princípios e as normas que garantem a inclusão, enquanto processo que visa responder à diversidade das necessidades e potencialidades de todos e de cada um dos alunos, através do aumento da participação nos processos de aprendizagem e na vida da comunidade educativa. Diário da República, 7 jul. 2018. Disponível em: https://dre.pt/dre/ detalhe/decreto-lei/54-2018-115652961. Acesso: 25 fev. 2024.
+
+PORTUGAL. Gabinete do Secretário de Estado da Educação.
+
+Despacho n.º 6.478, de 26 de julho de 2017. Homologa o perfil dos alunos à saída da escolaridade obrigatória. Diário da República, 27 jul. 2017. Disponível em: https://dre.pt/dre/detalhe/despacho/6478-2017-107752620. Acesso: 25 fev. 2024.
+
+PORTUGAL. Assembleia da República. Lei n.º 31, de 20 de dezembro de 2002. Aprova o sistema de avaliação da educação e do ensino não superior,
+
+desenvolvendo o regime previsto na lei n.º 46/86, de 14 de outubro (Lei de Bases do Sistema Educativo). Diário da República, 20 dez. 2002. Disponível em: https://dre.pt/dre/detalhe/lei/31-2002-405486. Acesso: 7 jan. 2024.
+
+QUINTAS, H.; GONÇALVES, J. A.; VALADAS, S. Academic success in schools in the Algarve: when leadership is part of the solution and not of the problem. Revista Brasileira de Educação, Rio de Janeiro, v. 22, n. 71, p. 1-23, 2017. https://doi.org/10.1590/S1413-24782017227156
+
+ROCHA, L. Avaliação externa de escolas: liderança(s) e autoavaliação que relação? Eduser: Revista de Educação, Bragança, v. 4, n. 2, p. 44-64, 2012.
+
+SEABRA, F.; ABELHA, M.; HENRIQUES, S.; MOURAZ, A. Policies and practices of external evaluation of schools: spaces for teacher collaboration? Ensaio :Avaliação e Políticas Públicas em Educação, Rio de Janeiro, v. 30, n. 116, p. 644-668, jul./set. 2022. https://doi.org/10.1590/S0104-40362022003003442
+
+SEABRA, F.; MOURAZ, A.; ABELHA, M.; HENRIQUES, S. Equidade e inclusão nas políticas de educação: perspetivas a partir dos relatórios de avaliação externa de escolas. Indagatio Didactica, Aveiro, v. 12, n. 5, p. 99-117, dez. 2020. https://doi.org/10.34624/id.v12i5.23445
+
+SEABRA, F.; PACHECO, J. A. Avaliação externa de escolas: perspetivas dos diretores da região norte de Portugal. Revista de Estudios e Investigación en Psicología y Educación, Coruña, v. 10, p. 6-10, 2015. https://doi.org/10.17979/reipe.2015.0.10.111
+
+SOUSA, J.; COSTA, N.; MARQUES, M.; PACHECO, J. A. Avaliação externa de escolas: um meta-estudo. Educação, Sociedade & Culturas, Porto, n. 47, p. 53-72, 2016. https://doi.org/10.34626/esc.vi47.187
+
+SOUSA, J.; PACHECO, J. A. Perceções dos docentes sobre a avaliação externa das escolas em Portugal. Roteiro, Joaçaba, v. 43, n. 1, p. 237-258, 2018. https://doi.org/10.18593/r.v43i1.15852
+
+TAUT, S.; RAKOCZY, K. Observing instructional quality in the context of school evaluation. Learning and Instruction, Leuven, v. 46, p. 45-60, 2016.
+
+https://doi.org/10.1016/j.learninstruc.2016.08.003
+
+VENTURA, A. Avaliação e inspeção das escolas: estudo de impacte do
+
+programa de avaliação integrada. Tese (Doutorado) – Universidade de Aveiro, Aveiro, 2006.
+
+VILELAS, J. Investigação :o processo de construção do conhecimento. Lisboa: Sílabo, 2022.
+
+WAGNER, I. Effectiveness and perceived usefulness of follow-up classroom observations after school inspections in Northern Germany. Studies in Educational Evaluation, London, v. 67, p. 1-9, 2020.
+
+https://doi.org/10.1016/j.stueduc.2020.100913
+
+Informações sobre os autores
+
+XIAO, Y.; WATSON, M. Guidance on conducting a systematic literature
+
+review. Journal of Planning Education and Research, Tallahassee, v. 39, n. 1, p. 93-112, 2019. https://doi.org/10.1177/0739456X17723971
+
+Jennifer Silva: Doutoranda do Programa Doutoral em Educação, do ramo de Administração
+
+e Políticas Educacionais, na Universidade de Aveiro (Portugal). Investigadora não doutorada do Centro de Investigação em Didática e Tecnologia na Formação de Formadores (CIDTFF). Contato: jennifersilva@ua.pt
+
+Alexandre Ventura: Doutor em Educação. Professor Associado na Universidade de
+
+Aveiro (Portugal) e investigador doutorado do Centro de Investigação em Didática e Tecnologia na Formação de Formadores (CIDTFF). Contato: alexandre.ventura@ua.pt
+
+Diana Oliveira: Doutora em Educação, com especialização em Supervisão e Avaliação.
+
+Professora Auxiliar na Universidade de Aveiro (Portugal) e investigadora doutorada do Centro de Investigação em Didática e Tecnologia na Formação de Formadores (CIDTFF). É membro do International Centre for the Comparative Study of Doctoral Education. Contato: diana.oliveira@ua.pt
+
+Contribuição dos autores: Jennifer Silva, Alexandre Ventura e Diana Oliveira – Conceptualização, metodologia, validação, escrita do manuscrito deste artigo, revisões e correções. Jennifer Silva – Investigação, curadoria dos dados. Alexandre Ventura e Diana Oliveira – Supervisão.
+
+Dados: Todo o conjunto de dados que dá suporte ao conteúdo deste estudo foi publicado no próprio artigo.
+
+Conflitos de interesse: Os autores declaram que não têm nenhum interesse comercial ou associativo que represente conflito de interesse em relação à publicação do manuscrito.
+
+Financiamento: Apoio de fundos nacionais através da Fundação para a Ciência e a Tecnologia,
+
+I.P., no âmbito da bolsa de investigação com Ref.ª 2023.00894.BD (autora Jennifer Silva) e do projeto do CIDTFF – UIDB/00194/2020 (https://doi.org/10.54499/UIDB/00194/2020).
+
+Editores que avaliaram este artigo:
+
+Cândido Gomes
+
+Alvaro Chrispino
+
+P | Population população?) (que | Estabelecimentos públicos de Ensino não superior.
+
+I | Intervention intervenção?) (que | Compreender influência da implementação de AEE a na políticas práticas inclusivas. e
+
+C | Comparison vai (o que se comparar?) | Diferentes abordagens de AEE, incluindo comparações influência específica internacionais Portugal. e a em
+
+O | Outcome pretende?) (o que se | Conhecer impacto da adoção eficácia das políticas AEE o na e educativas inclusivas.
+
+Scopus | Web of Science | Eric | SciELO | RCAAP
+
+Palavras-chave operadores e booleanos | “ external evaluation” AND “school inspection ” AND NOT “higher education” AND “ educational policies” | external evaluation of school school AND inspection higher NOT education | external evaluation AND school inspection AND NOT higher education AND educational policies | avaliação externa de escolas AND inspeção | avaliação de externa escolas
+
+Modo de pesquisa | Search with: title/abstract/ keywords | All databases Collections: Web of Science Core Collection TOPIC | Search collection | Todos os índices | Pesquisa avançada, feita por “ título” e “ ” assunto
+
+Filtros | Document type: Article Review | Article article Review Open Access | Peer reviewed only Full text available on ERIC | Artigos | Artigos científicos Comunicação conferência em aberto Acesso
+
+Artigo | Autores | Ano | Revistas
+
+A0 1 | Brauckmann e Pashiardis | 2010 | International Journal of Educational Management
+
+A02 | Ehren Honing h e | 2012 | Studies in Educational Evaluation
+
+A03 | Rocha | 2012 | EDUSER: Revista de Educação
+
+A04 | Ehren, Altrichter, Mcnamara, O’Hara | 2013 | Educational Evaluation and Assessment, Accountability
+
+A0 5 | Lankes, Vaccaro, Gegenfurtne r | 2013 | Unterrichtswissenschaft
+
+A06 | Gonçalves, Leite, Fernandes | 201 5 | Scientiarum Acta
+
+A07 | Seabra Pacheco e | 201 5 | Revista de Estudios Investigación e em Psicología Educación y
+
+A08 | Gustafsson al. et | 201 5 | Studies in Educational Evaluation
+
+A09 | Sousa, Costa, Pacheco Marques e | 2016 | Educação, Sociedade & Culturas
+
+A10 | Taut Rakoczy e | 2016 | and Learning Instruction
+
+A1 1 | Hopkins al. et | 2016 | Schools Improving
+
+A12 | Quintas, Gonçalves e Valadas | 2017 | Revista Brasileira de Educação
+
+A13 | Pacheco Sousa e | 2018 | Revista Roteiro
+
+A14 | al. Brown et | 2018 | Australian Journal of Teacher Education
+
+A1 5 | Piezunka | 2019 | Historical Social Research
+
+A16 | Nogueira, Gonçalves Costa e | 2019 | Revista de Educação Portuguesa
+
+A17 | Wagne r | 2020 | Studies in Educational Evaluation
+
+A18 | Seabra, Mouraz, Abelha, Henriques | 2020 | Indagatio Didactica
+
+A19 | Ólafsdóttir, Jónasson, Sigurðardóttir e Aspelund | 2022 | Nordic Journal of Studies in Educational Policy
+
+A20 | Ólafsdóttir, Jónasson Sigurðardótti e r | 2022 | Studies in Educational Evaluation
+
+A2 1 | Seabra, Abelha, Henriques, Mouraz | 2022 | Ensaio: Avaliação Políticas Públicas e em Educação
+
+A22 | Miranda, Seabra e Pacheco | 2023 | Práxis Educativa
+
+Fluxograma PRISMA conferido na revisão
