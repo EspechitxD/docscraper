@@ -250,6 +250,7 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     if not document.url:
         raise AppError("O documento não possui arquivo local nem URL.")
     _step(session, job, "validating", "done", "URL validada para download autorizado.")
+    _release_db(session)
     trace: list[dict] = []
 
     def stopped() -> bool:
@@ -274,6 +275,7 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
         (folder / "original" / "source.html").write_bytes(result.data)
         declared = declared_pdf(text, result.final_url)
         if declared:
+            _release_db(session)
             try:
                 pdf_result, _pdf_cached = managed_fetch(
                     declared["url"],
@@ -354,6 +356,7 @@ def _pause_capture(session, job, document, captured: dict) -> None:
 def _capture_page(session, job, document, folder: Path, languages, allow_local, max_pages, timeout) -> None:
     from cpmh_backend.services.capture import capture_html
 
+    _release_db(session)
     try:
         captured = capture_html(
             document.normalized_url or document.url,
@@ -411,6 +414,7 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
         for page in existing_pages
         if page.sequence in done and page.image_path and Path(page.image_path).exists()
     }
+    _release_db(session)
     analysis = analyze_pdf(pdf_path, languages)
     document.page_count = analysis["page_count"]
     document.page_count_estimate = analysis["page_count"]
@@ -446,6 +450,7 @@ def _persist_rendered_pages(session, job, document, pages: list[dict], languages
         if page.get("sequence") in done:
             continue
         if not page.get("blocks"):
+            _release_db(session)
             image = Image.open(page["path"]).convert("RGB")
             blocks, image, notes = recognize(image, languages)
             classify_blocks(blocks)
@@ -830,8 +835,17 @@ def _clear_working_files(session, document: Document, folder: Path) -> None:
         target.mkdir(parents=True, exist_ok=True)
 
 
+def _release_db(session) -> None:
+    """Encerra a transação antes de rede, navegador ou PDF.
+
+    O SQLite só deixa uma escrita por vez. Segurar a transação durante o
+    download faz o botão Extrair responder 500.
+    """
+    session.commit()
+
+
 def _reload_job(session, job) -> None:
-    session.flush()
+    session.commit()
     session.refresh(job)
 
 

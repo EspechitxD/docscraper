@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from cpmh_backend.config import get_settings
 from cpmh_backend.services.capture import pages_from_downloaded_html
+from cpmh_backend.services.fetch import FetchResult
 from cpmh_backend.services.pipeline import run_job
 
 PAGE_1 = """<!doctype html><html><head><title>Página 1</title></head><body>
@@ -218,3 +221,53 @@ def test_unreadable_declared_pdf_falls_back_to_page_text(client, monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_download_does_not_lock_the_database(client, monkeypatch):
+    probe = {"ok": False, "error": ""}
+
+    def slow_fetch(*_args, **_kwargs):
+        connection = sqlite3.connect(get_settings().database_path, timeout=1)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("SELECT 1")
+            connection.commit()
+            probe["ok"] = True
+        except sqlite3.OperationalError as exc:
+            probe["error"] = str(exc)
+        finally:
+            connection.close()
+        html = b"<html><body><p>A placa fica no leito osseo.</p></body></html>"
+        return FetchResult("http://127.0.0.1/manual", "http://127.0.0.1/manual", html, "text/html", "html"), False
+
+    monkeypatch.setattr("cpmh_backend.services.pipeline.managed_fetch", slow_fetch)
+    def browser_crash(*_args, **_kwargs):
+        raise AttributeError("'NoneType' object has no attribute 'get'")
+
+    monkeypatch.setattr("cpmh_backend.services.capture.capture_html", browser_crash)
+    client.put("/api/preferences", json={"values": {"allow_local_network": True}})
+    project = client.post("/api/projects", json={"name": "Sem trava"}).json()
+    added = client.post(f"/api/projects/{project['id']}/documents", json={"url": "http://127.0.0.1/manual"})
+    document_id = added.json()["document"]["id"]
+    job = client.post(f"/api/documents/{document_id}/jobs", json={"translate_mode": "none", "export_formats": []})
+    assert job.status_code == 200, job.text
+    run_job(job.json()["id"])
+    assert probe["ok"], probe
+    finished = client.get(f"/api/jobs/{job.json()['id']}").json()
+    assert finished["state"] == "completed", finished
+    assert "AttributeError" not in (finished["error"] or "")
+
+
+def test_locked_database_returns_a_clear_message(client):
+    project = client.post("/api/projects", json={"name": "Ocupado"}).json()
+    added = client.post(f"/api/projects/{project['id']}/documents", json={"url": "https://example.com/manual"})
+    document_id = added.json()["document"]["id"]
+    connection = sqlite3.connect(get_settings().database_path, timeout=0.2)
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        response = client.post(f"/api/documents/{document_id}/jobs", json={"translate_mode": "none", "export_formats": []})
+    finally:
+        connection.rollback()
+        connection.close()
+    assert response.status_code == 503, response.text
+    assert response.json()["detail"]["message"] == "O banco local estava ocupado pela extração. Clique em Extrair de novo."

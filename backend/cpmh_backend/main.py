@@ -4,9 +4,11 @@ import os
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError
 
 from cpmh_backend import __version__
 from cpmh_backend.api import router
@@ -41,6 +43,17 @@ def create_app(*, start_worker: bool = True) -> FastAPI:
         allow_headers=["*"],
         allow_credentials=False,
     )
+    @app.exception_handler(OperationalError)
+    async def database_busy(_request: Request, exc: OperationalError) -> JSONResponse:
+        text = str(getattr(exc, "orig", exc)).lower()
+        if "locked" in text or "busy" in text:
+            message = "O banco local estava ocupado pela extração. Clique em Extrair de novo."
+            code = "database_busy"
+        else:
+            message = "Não foi possível gravar no banco local."
+            code = "database"
+        return JSONResponse(status_code=503, content={"detail": {"code": code, "message": message}})
+
     app.include_router(router, prefix="/api")
     app.include_router(knowledge_router, prefix="/api")
     if settings.static_dir and settings.static_dir.exists():

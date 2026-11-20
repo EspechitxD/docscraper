@@ -173,6 +173,8 @@ def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, obse
         browser = playwright.chromium.launch(channel="chrome", headless=True)
         try:
             context = browser.new_context(viewport={"width": 1280, "height": 1600}, device_scale_factor=1)
+            context.set_default_timeout(int(timeout * 1000))
+            context.set_default_navigation_timeout(int(timeout * 1000))
             page = context.new_page()
 
             page.route("**/*", lambda route: _allow_route(route, allow_local))
