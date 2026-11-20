@@ -1,5 +1,11 @@
 # Changelog
 
+## Recuperação de acesso — 20 de novembro de 2026
+
+- O diagnóstico separa CAPTCHA, desafio, limite, JavaScript, sessão expirada, login, bloqueio, rede e falha do navegador.
+- Pedidos bloqueados não são repetidos. Erro temporário tem no máximo três tentativas; um 429 curto tem uma.
+- O `robots.txt` é respeitado quando está disponível. Um PDF indicado pela própria página pode ser usado. Não há disfarce de automação nem busca por outras fontes.
+
 ## Acesso web — 20 de novembro de 2026
 
 - A captura classifica CAPTCHA, verificação humana, login, bloqueio e limite de pedidos antes de extrair.

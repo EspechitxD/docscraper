@@ -5,7 +5,10 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from urllib.parse import urlsplit
+
 from cpmh_backend.models import AccessEvent, utcnow
+from cpmh_backend.recovery import annotate
 
 SESSION_TTL = dt.timedelta(minutes=30)
 
@@ -15,6 +18,7 @@ def partition_name(project_id: str, job_id: str) -> str:
 
 
 def remember(session, job, document, verdict: dict, *, source: str) -> dict:
+    verdict = annotate(verdict)
     checkpoint = dict(job.checkpoint or {})
     access = dict(checkpoint.get("access") or {})
     attempts = list(access.get("attempts") or [])
@@ -28,6 +32,8 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
                 "provider": verdict.get("provider") or "none",
                 "url": (verdict.get("final_url") or verdict.get("url") or "")[:500],
                 "source": source,
+                "mechanism": verdict.get("mechanism") or "",
+                "action": verdict.get("action") or "",
                 "at": utcnow().isoformat(),
             }
         )
@@ -48,6 +54,12 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
             "persistent": persistent,
             "attempts": attempts[-12:],
             "partition": partition_name(document.project_id, job.id),
+            "mechanism": verdict.get("mechanism") or "",
+            "method": verdict.get("method") or "",
+            "action": verdict.get("action") or "",
+            "alternative": verdict.get("alternative"),
+            "domain": (urlsplit(verdict.get("final_url") or verdict.get("url") or document.url or "").hostname or ""),
+            "attempts_made": verdict.get("attempts_made") or len(attempts),
         }
     )
     if not cleared:

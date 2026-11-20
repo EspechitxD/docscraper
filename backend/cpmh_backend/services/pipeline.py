@@ -6,15 +6,16 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from PIL import Image
 from sqlalchemy import delete, select
 
+from cpmh_backend.access_flow import remember
 from cpmh_backend.config import get_settings
 from cpmh_backend.db import preference_value, session_scope
-from cpmh_backend.access import classify, signals_from_html
-from cpmh_backend.access_flow import remember
-from cpmh_backend.errors import AccessPaused, AppError, CollisionError, HttpAccess, UrlRejected
+from cpmh_backend.errors import AccessPaused, AppError, CollisionError, UrlRejected
+from cpmh_backend.recovery import managed_fetch, timeout_for
 from cpmh_backend.hashing import dhash, sha256_bytes, sha256_file
 from cpmh_backend.intelligence import Block, FlowPiece, classify_blocks, detect_language, link_page_continuity, reading_order
 from cpmh_backend.models import (
@@ -34,7 +35,6 @@ from cpmh_backend.models import (
 )
 from cpmh_backend.paths import document_dir
 from cpmh_backend.services.exporting import export_document
-from cpmh_backend.services.fetch import fetch_url
 from cpmh_backend.services.ocr import recognize
 from cpmh_backend.services.pdf_analysis import analyze_pdf
 from cpmh_backend.services.translate import translate_text
@@ -75,6 +75,9 @@ def run_job(job_id: str) -> None:
             document.error_message = exc.message
             _step(session, job, "export", "collision", exc.message)
         except (AppError, UrlRejected) as exc:
+            session.refresh(job)
+            if job.state in {"cancelled", "paused"}:
+                return
             message = exc.message if hasattr(exc, "message") else str(exc)
             job.state = "failed"
             job.error = message[:500]
@@ -137,6 +140,10 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     max_pages = int(preference_value(session, "max_pages") or 50)
     max_bytes = int(preference_value(session, "max_download_mb") or 80) * 1024 * 1024
     timeout = float(preference_value(session, "timeout_seconds") or 30)
+    host = urlsplit(document.normalized_url or document.url or "").hostname or ""
+    configured = preference_value(session, "domain_timeouts") or {}
+    timeout = timeout_for(host, timeout, configured if isinstance(configured, dict) else {})
+    domain_limit = int(preference_value(session, "domain_concurrency") or 2)
     allow_local = bool(settings.allow_local_network or preference_value(session, "allow_local_network"))
     folder = document_dir(settings, document.project_id, document.id)
     force = bool(options.get("force_recapture"))
@@ -145,7 +152,7 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
         _clear_working_files(session, document, folder)
         checkpoint = {}
         job.checkpoint = {}
-    local = _ensure_source(session, settings, job, document, folder, allow_local, max_bytes, timeout, force)
+    local = _ensure_source(session, settings, job, document, folder, allow_local, max_bytes, timeout, force, domain_limit)
     if not _stage(session, job, document, "capturing", 15):
         return
     existing_region = session.scalar(
@@ -230,7 +237,17 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     _finish(session, job, document, final, message)
 
 
-def _ensure_source(session, settings, job, document, folder: Path, allow_local, max_bytes, timeout, force: bool) -> str:
+def _store_trace(job, trace: list[dict]) -> None:
+    if not trace:
+        return
+    checkpoint = dict(job.checkpoint or {})
+    rows = list(checkpoint.get("requests") or [])
+    rows.extend(trace)
+    checkpoint["requests"] = rows[-20:]
+    job.checkpoint = checkpoint
+
+
+def _ensure_source(session, settings, job, document, folder: Path, allow_local, max_bytes, timeout, force: bool, domain_limit: int) -> str:
     if document.local_path and Path(document.local_path).exists() and not force and document.source_kind != "html":
         return document.local_path
     if document.origin == "file" and document.local_path and Path(document.local_path).exists():
@@ -238,11 +255,26 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     if not document.url:
         raise AppError("O documento não possui arquivo local nem URL.")
     _step(session, job, "validating", "done", "URL validada para download autorizado.")
+    trace: list[dict] = []
+
+    def stopped() -> bool:
+        session.refresh(job)
+        return job.state in {"cancelled", "paused"}
+
     try:
-        result = fetch_url(document.url, allow_local=allow_local, max_bytes=max_bytes, timeout=timeout)
-    except HttpAccess as exc:
-        signals = signals_from_html(document.url or "", exc.final_url, exc.http_status, exc.snippet)
-        raise AccessPaused(classify(signals)) from exc
+        result, _cached = managed_fetch(
+            document.url,
+            allow_local=allow_local,
+            max_bytes=max_bytes,
+            timeout=timeout,
+            domain_limit=domain_limit,
+            should_stop=stopped,
+            trace=trace,
+        )
+    except AccessPaused:
+        _store_trace(job, trace)
+        raise
+    _store_trace(job, trace)
     if result.kind == "pdf":
         destination = folder / "original" / "source.pdf"
         destination.write_bytes(result.data)

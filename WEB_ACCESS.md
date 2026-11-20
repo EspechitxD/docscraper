@@ -33,3 +33,15 @@ Páginas locais controladas, sem CAPTCHA real:
 - verificação expirada e bloqueio repetido.
 
 A suíte completa passou nesta máquina. Não há suporte universal a CAPTCHAs de produção. Um site que só libera o navegador em que a pessoa concluiu o desafio continua bloqueado para a captura, de propósito: a sessão do Electron não é exportada.
+
+## Compatibilidade e recuperação
+
+A captura continua usando o Chromium e o Playwright que já existem. O JavaScript da página é executado e a primeira carga espera o DOM e, por até três segundos, a rede ficar ociosa. Isso não muda o identificador do navegador.
+
+Antes do download, o aplicativo lê o `robots.txt` quando ele está disponível. Um caminho proibido não é pedido. Há um limite de pedidos simultâneos por domínio e um timeout opcional por domínio, em Configurações.
+
+Erros temporários de rede e respostas 5xx podem ser repetidos no máximo três vezes, com espera crescente e um pequeno intervalo aleatório. Um HTTP 429 com `Retry-After` de até 30 segundos tem no máximo uma nova tentativa. HTTP 401, 403, CAPTCHA, desafio, login e sessão expirada não são repetidos. Uma resposta pública já obtida pode ser reaproveitada por dois minutos, sem guardar página de bloqueio.
+
+Se a própria página indicar um PDF no mesmo site, o painel oferece esse arquivo. A captura não procura espelhos nem outras fontes. O painel mostra o domínio, o estado, a proteção detectada, o método autorizado, as tentativas, a próxima ação e o histórico.
+
+Os cenários locais cobrem desafio, CAPTCHA, 429, 403, sessão expirada, JavaScript obrigatório, PDF público, robots.txt, falha de rede e o limite de concorrência. Não há compatibilidade universal com proteções de sites.

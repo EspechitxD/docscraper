@@ -17,11 +17,12 @@ class UrlRejected(AppError):
 class HttpAccess(UrlRejected):
     """Resposta HTTP de bloqueio. O trecho não entra em log."""
 
-    def __init__(self, status_code: int, url: str, snippet: str):
+    def __init__(self, status_code: int, url: str, snippet: str, retry_after: float | None = None):
         super().__init__(f"O servidor respondeu {status_code} e o acesso foi interrompido.")
         self.http_status = status_code
         self.final_url = url
         self.snippet = snippet[:4000]
+        self.retry_after = retry_after
 
 
 class AccessPaused(AppError):

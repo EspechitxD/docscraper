@@ -126,6 +126,10 @@ export function SettingsScreen() {
           <Field label="Máximo de páginas"><input className="field" type="number" value={Number(values.max_pages ?? 50)} onChange={(event) => update("max_pages", Number(event.target.value))} /></Field>
           <Field label="Download máximo (MB)"><input className="field" type="number" value={Number(values.max_download_mb ?? 80)} onChange={(event) => update("max_download_mb", Number(event.target.value))} /></Field>
           <Field label="Timeout (s)"><input className="field" type="number" value={Number(values.timeout_seconds ?? 30)} onChange={(event) => update("timeout_seconds", Number(event.target.value))} /></Field>
+          <Field label="Pedidos simultâneos por domínio (1–4)"><input className="field" type="number" min={1} max={4} value={Number(values.domain_concurrency ?? 2)} onChange={(event) => update("domain_concurrency", Number(event.target.value))} /></Field>
+          <Field label="Timeout por domínio">
+            <textarea className="field" rows={4} value={timeoutText(values.domain_timeouts)} onChange={(event) => update("domain_timeouts", parseTimeouts(event.target.value))} placeholder={"exemplo.org 20\neditora.org 45"} />
+          </Field>
           <Field label="Retenção do cache (dias)"><input className="field" type="number" value={Number(values.retention_days_cache ?? 14)} onChange={(event) => update("retention_days_cache", Number(event.target.value))} /></Field>
           <label className="check">
             <input type="checkbox" checked={Boolean(values.allow_local_network)} onChange={(event) => update("allow_local_network", event.target.checked)} />
@@ -151,4 +155,20 @@ export function SettingsScreen() {
       </div>
     </section>
   );
+}
+
+function timeoutText(value: unknown): string {
+  if (!value || typeof value !== "object") return "";
+  return Object.entries(value as Record<string, unknown>).map(([host, seconds]) => `${host} ${seconds}`).join("\n");
+}
+
+function parseTimeouts(text: string): Record<string, number> {
+  const parsed: Record<string, number> = {};
+  for (const line of text.split("\n")) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const seconds = Number(parts[1]);
+    if (parts[0] && Number.isFinite(seconds)) parsed[parts[0].toLowerCase()] = seconds;
+  }
+  return parsed;
 }
