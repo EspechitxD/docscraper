@@ -49,6 +49,16 @@ Com o backend em `127.0.0.1:8765` e o Vite em `127.0.0.1:5173`, o Chrome automat
 
 Não houve erro de JavaScript nessas navegações. A janela Electron em si não foi o alvo desse roteiro; o roteiro usou a mesma interface que o Electron carrega.
 
+## Fase 10
+
+Nova execução da suíte completa, no mesmo dia: 26 testes aprovados, cerca de 28 segundos. Além dos 16 anteriores, a suíte abre os arquivos exportados depois de editar, apagar, reclassificar, criar, mover e restaurar região. Também cobre os modos de tradução, o glossário do projeto, a migração aditiva, a imagem exportada e removida, o OMML de `E = mc²` e o conjunto de layout.
+
+O conjunto de layout tem 13 blocos anotados. O teste exigiu 13 acertos e passou, com os dois títulos previstos entre eles. O PDF de duas linhas classificou “Manual tecnico de ancoragem” como título. Não há outra taxa de acerto.
+
+O overlay, medido no Chrome com o script `electron/overlay.js`, ficou a 0 px do alvo nos fatores 0,5, 1, 1,5 e 2 e após rolagem. O teste automatizado percorre também 75%, 125% e o redimensionamento e falha se a diferença passar de 3 px. Essa execução passou. O `--no-sandbox` desse teste existe porque o processo da máquina é root. O aplicativo não usa essa flag.
+
+A mesma sessão de Chrome abriu a interface em `127.0.0.1:5174` contra o backend em `127.0.0.1:8766`. A seleção vazia foi recusada na tela, uma região foi marcada, a imagem extraída apareceu no painel e a legenda gravada voltou na API como “Placa conferida na tela”, com revisão `reviewed`. O glossário do projeto foi retirado e colocado de novo. Não houve erro de JavaScript. A vista de 390×844 mostrou o painel de imagens.
+
 ## Não validado
 
 - Instalador NSIS em Windows 10 ou 11.

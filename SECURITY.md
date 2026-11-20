@@ -18,6 +18,8 @@ A captura Playwright aplica a mesma validação a cada requisição da página.
 
 Senhas, tokens, cookies e chaves não são gravados no log. O relatório técnico não inclui o texto dos documentos. Exportações não são escritas dentro da pasta de instalação nem em diretórios de sistema. Arquivo existente só é substituído se o usuário escolher substituir. Caso contrário a API responde `409 name_collision`.
 
-Tradução externa exige URL configurada e consentimento na tarefa. Sem isso, nenhum texto sai do computador. Neste ambiente não há provedor externo configurado nem Argos instalado.
+Tradução externa exige URL configurada e consentimento na tarefa. Sem isso, nenhum texto sai do computador. Neste ambiente não há provedor externo configurado nem Argos instalado. O aplicativo não baixa modelos de tradução nem binários de OCR por conta própria.
+
+A exclusão de uma imagem só apaga o arquivo se nenhuma outra imagem, tabela ou fórmula apontar para o mesmo caminho. O aplicativo empacotado não executa o Python instalado na máquina quando o backend congelado está ausente.
 
 A retenção do cache é uma preferência. Documentos do usuário não são apagados na desinstalação prevista: o instalador NSIS está com `deleteAppDataOnUninstall` desligado. Esse instalador ainda não foi executado.

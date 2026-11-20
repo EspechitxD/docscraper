@@ -1,5 +1,13 @@
 # Changelog
 
+## Fase 10 — 20 de novembro de 2026
+
+- A revisão de uma região passa a atualizar a representação usada por DOCX, PDF, TXT, JSON e pacote.
+- Histórico de revisão e migração aditiva para a coluna de evidência.
+- Modos de tradução unificados, seleção por ID e glossário escolhido no projeto.
+- Painel de revisão de imagens, equação OMML só para fórmula linear confiável e overlay medido no Chrome.
+- O aplicativo empacotado deixa de recorrer ao Python do sistema. O instalador Windows continua sem teste real.
+
 ## 0.1.0 — 20 de novembro de 2026
 
 - Primeira versão de trabalho do CPMH Document Intelligence.
