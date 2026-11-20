@@ -6,7 +6,36 @@ export const ACCESS_STATES: Record<string, string> = {
   ACCESS_DENIED: "Acesso negado",
   RATE_LIMITED: "Limite de pedidos",
   UNKNOWN_BLOCK: "Bloqueio não classificado",
-  NAVIGATION_ERROR: "Erro de navegação",
+  NAVIGATION_ERROR: "Falha de rede",
+  JAVASCRIPT_REQUIRED: "JavaScript obrigatório",
+  SESSION_EXPIRED: "Sessão expirada",
+  BROWSER_ERROR: "Erro do navegador",
+};
+
+export const ACCESS_METHODS: Record<string, string> = {
+  capture: "Captura da URL",
+  human_verification: "Verificação humana no site",
+  manual_login: "Login manual no navegador",
+  human_browser: "Abrir no navegador integrado",
+  wait: "Esperar e retomar manualmente",
+  recheck: "Nova checagem",
+  public_pdf: "PDF público indicado pela página",
+  import_file: "Importar o arquivo",
+};
+
+export const ACCESS_MECHANISMS: Record<string, string> = {
+  captcha: "CAPTCHA",
+  cloudflare_challenge: "Desafio Cloudflare",
+  rate_limit: "Limite de pedidos",
+  javascript_required: "JavaScript obrigatório",
+  session_expired: "Sessão expirada",
+  authentication: "Autenticação",
+  access_denied: "Bloqueio de acesso",
+  network: "Falha de rede",
+  browser: "Erro do navegador",
+  robots: "robots.txt",
+  none: "Nenhum",
+  unknown: "Não classificado",
 };
 
 export const ACCESS_PROVIDERS: Record<string, string> = {

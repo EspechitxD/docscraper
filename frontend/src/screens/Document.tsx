@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
+import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
 
 type Tab = "process" | "review" | "structure" | "export" | "browser";
@@ -916,7 +916,12 @@ type AccessView = {
     partition?: string;
     persistent?: boolean;
     cleared?: boolean;
-    attempts?: { state: string; provider: string; at: string; source: string }[];
+    attempts?: { state: string; provider: string; at: string; source: string; mechanism?: string; action?: string }[];
+    mechanism?: string;
+    method?: string;
+    action?: string;
+    domain?: string;
+    alternative?: { kind?: string; url?: string; label?: string } | null;
   };
   resumable: boolean;
   reason: string;
@@ -971,11 +976,27 @@ function AccessPanel({ documentUrl, projectId, jobId, onChanged }: { documentUrl
     await load();
   }
 
+  async function useAlternative() {
+    setNote("");
+    await api(`/jobs/${jobId}/access/alternative`, { method: "POST" });
+    setNote("O PDF público indicado pela página foi salvo. Retome a tarefa para continuar a partir dele.");
+    await load();
+    await onChanged();
+  }
+
+  const attempts = view.access.attempts || [];
   return (
     <section className="panel stack">
       <h2>Acesso à página</h2>
-      <p>{ACCESS_STATES[state] || state} · {provider} · confiança {Math.round((view.access.confidence || 0) * 100)}%</p>
-      <p>{view.access.message}</p>
+      <div className="kv">
+        <span>Domínio</span><strong>{view.access.domain || "—"}</strong>
+        <span>Estado</span><strong>{ACCESS_STATES[state] || state}</strong>
+        <span>Proteção</span><strong>{ACCESS_MECHANISMS[view.access.mechanism || ""] || provider}</strong>
+        <span>Método autorizado</span><strong>{ACCESS_METHODS[view.access.method || ""] || "—"}</strong>
+        <span>Tentativas</span><strong>{attempts.length}</strong>
+        <span>Confiança</span><strong>{Math.round((view.access.confidence || 0) * 100)}%</strong>
+      </div>
+      <p>{view.access.action || view.access.message}</p>
       {view.access.persistent && <Notice kind="warn">O bloqueio se repetiu. A captura por URL não continua. Importe o arquivo manualmente.</Notice>}
       {view.reason && !view.resumable && <Notice kind="warn">{view.reason}</Notice>}
       {view.access.evidence && view.access.evidence.length > 0 && <p>Evidências: {view.access.evidence.join(", ")}.</p>}
@@ -984,18 +1005,21 @@ function AccessPanel({ documentUrl, projectId, jobId, onChanged }: { documentUrl
         <Button kind="secondary" onClick={() => void openBrowser().catch((cause) => setNote(isApiError(cause) ? cause.message : "O navegador não abriu."))}>Abrir navegador</Button>
         <Button kind="secondary" onClick={() => void recheck().catch((cause) => setNote(isApiError(cause) ? cause.message : "A checagem não foi concluída."))}>Verificar novamente</Button>
         <Button kind="ghost" onClick={() => void closeSession().catch((cause) => setNote(isApiError(cause) ? cause.message : "A sessão não foi encerrada."))}>Encerrar sessão</Button>
+        {view.access.alternative?.kind === "public_pdf" && (
+          <Button onClick={() => void useAlternative().catch((cause) => setNote(isApiError(cause) ? cause.message : "O PDF público não foi obtido."))}>Usar PDF público</Button>
+        )}
       </div>
       {note && <Notice>{note}</Notice>}
       <div className="table-wrap">
         <table>
-          <thead><tr><th>Quando</th><th>Estado</th><th>Tipo</th><th>Evidência</th></tr></thead>
+          <thead><tr><th>Quando</th><th>Estado</th><th>Proteção</th><th>Próxima ação</th></tr></thead>
           <tbody>
-            {(view.events || []).map((event) => (
-              <tr key={event.id}>
-                <td>{formatWhen(event.created_at)}</td>
+            {attempts.map((event, index) => (
+              <tr key={`${event.at}-${index}`}>
+                <td>{formatWhen(event.at)}</td>
                 <td>{ACCESS_STATES[event.state] || event.state}</td>
-                <td>{ACCESS_PROVIDERS[event.provider] || event.provider}</td>
-                <td>{(event.evidence || []).join(", ") || "—"}</td>
+                <td>{ACCESS_MECHANISMS[event.mechanism || ""] || ACCESS_PROVIDERS[event.provider] || event.provider}</td>
+                <td>{event.action || "—"}</td>
               </tr>
             ))}
           </tbody>

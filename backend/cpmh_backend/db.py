@@ -28,6 +28,8 @@ DEFAULT_PREFERENCES: dict[str, object] = {
     "max_pages": 50,
     "max_download_mb": 80,
     "timeout_seconds": 30,
+    "domain_timeouts": {},
+    "domain_concurrency": 2,
     "retention_days_cache": 14,
     "purge_completed_captures_days": 0,
     "allow_local_network": False,

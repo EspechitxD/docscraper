@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import logging
+import re
 import secrets
 import uuid
 from pathlib import Path
@@ -342,6 +343,23 @@ def _prefs(db: Session) -> dict:
     return {key: preference_value(db, key) for key in DEFAULT_PREFERENCES}
 
 
+def _domain_timeouts(value) -> dict:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": "Os timeouts por domínio precisam ser um mapa de host para segundos."})
+    cleaned = {}
+    if len(value) > 20:
+        raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": "Use no máximo 20 domínios."})
+    for host, seconds in value.items():
+        name = str(host).strip().lower()
+        if not re.fullmatch(r"[a-z0-9.-]{1,253}", name) or name.startswith(".") or ".." in name:
+            raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": f"Domínio inválido: {host}"})
+        try:
+            cleaned[name] = max(3, min(int(float(seconds)), 120))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": f"Timeout inválido para {name}."}) from exc
+    return cleaned
+
+
 def _network_allowed(db: Session) -> bool:
     return bool(get_settings().allow_local_network or preference_value(db, "allow_local_network"))
 
@@ -431,6 +449,10 @@ def put_preferences(payload: PreferencesIn, db: Session = Depends(get_db)):
             value = max(1, min(int(value), 500))
         if key == "max_download_mb":
             value = max(1, min(int(value), 200))
+        if key == "domain_concurrency":
+            value = max(1, min(int(value), 4))
+        if key == "domain_timeouts":
+            value = _domain_timeouts(value)
         if key in {"confidence_high", "confidence_medium"}:
             value = max(0, min(float(value), 100))
         set_preference(db, key, value)
@@ -912,6 +934,64 @@ def close_access_session(job_id: str, db: Session = Depends(get_db)):
     item.checkpoint = checkpoint
     audit(db, "access", "Sessão de verificação encerrada.", {"job_id": item.id, "partition": access.get("partition") or ""})
     return {"partition": access.get("partition") or "", "closed": True}
+
+
+@router.post("/jobs/{job_id}/access/alternative", dependencies=[Depends(require_token)])
+def use_public_alternative(job_id: str, db: Session = Depends(get_db)):
+    item = _job(db, job_id)
+    document = db.get(Document, item.document_id)
+    access = dict((item.checkpoint or {}).get("access") or {})
+    alternative = access.get("alternative") or {}
+    target = str(alternative.get("url") or "")
+    if document is None or alternative.get("kind") != "public_pdf" or not target:
+        raise HTTPException(status_code=409, detail={"code": "no_alternative", "message": "Não há um PDF público indicado pela própria página."})
+    from cpmh_backend.access_flow import remember
+    from cpmh_backend.errors import AccessPaused
+    from cpmh_backend.hashing import sha256_bytes
+    from cpmh_backend.paths import document_dir
+    from cpmh_backend.recovery import managed_fetch, timeout_for
+    from urllib.parse import urlsplit
+
+    settings = get_settings()
+    host = urlsplit(target).hostname or ""
+    configured = preference_value(db, "domain_timeouts") or {}
+    timeout = timeout_for(host, float(preference_value(db, "timeout_seconds") or 30), configured if isinstance(configured, dict) else {})
+    limit = int(preference_value(db, "domain_concurrency") or 2)
+    max_bytes = int(preference_value(db, "max_download_mb") or 80) * 1024 * 1024
+    try:
+        result, _cached = managed_fetch(
+            target,
+            allow_local=_network_allowed(db),
+            max_bytes=max_bytes,
+            timeout=timeout,
+            domain_limit=limit,
+        )
+    except AccessPaused as exc:
+        remember(db, item, document, exc.verdict, source="alternative")
+        raise HTTPException(status_code=409, detail={"code": "access_blocked", "message": exc.verdict.get("message")}) from exc
+    if result.kind != "pdf":
+        raise HTTPException(status_code=409, detail={"code": "not_pdf", "message": "O endereço público não devolveu um PDF. Nada foi extraído."})
+    folder = document_dir(settings, document.project_id, document.id)
+    destination = folder / "original" / "source.pdf"
+    destination.write_bytes(result.data)
+    document.local_path = str(destination)
+    document.source_kind = "pdf"
+    document.content_sha256 = sha256_bytes(result.data)
+    document.error_message = ""
+    verdict = {
+        "state": "ACCESS_GRANTED",
+        "provider": "none",
+        "confidence": 0.9,
+        "url": target,
+        "final_url": result.final_url,
+        "evidence": ["PDF público indicado pela própria página"],
+        "message": "O PDF público indicado pela página foi salvo. A retomada usa esse arquivo e não volta ao endereço bloqueado.",
+        "http_status": 200,
+        "alternative": alternative,
+    }
+    remember(db, item, document, verdict, source="recheck")
+    audit(db, "access", "PDF público indicado pela página foi salvo.", {"job_id": item.id, "domain": host})
+    return {"access": (item.checkpoint or {}).get("access") or {}, "source_kind": document.source_kind}
 
 
 @router.post("/jobs/{job_id}/resume", dependencies=[Depends(require_token)])

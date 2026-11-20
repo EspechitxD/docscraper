@@ -23,6 +23,7 @@ _SIGNALS = """
   return {
     title: document.title || "",
     text: document.body ? document.body.innerText.slice(0, 1500) : "",
+    ready: document.readyState,
     iframes: Array.from(document.querySelectorAll("iframe")).map(src).filter(Boolean).slice(0, 20),
     scripts: Array.from(document.querySelectorAll("script")).map(src).filter(Boolean).slice(0, 30),
     markers: selectors.filter((selector) => document.querySelector(selector))
@@ -143,9 +144,16 @@ def capture_html(
             started = time.perf_counter()
             try:
                 response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
-            except (PlaywrightTimeout, PlaywrightError):
-                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "navegação não concluída"})
+            except PlaywrightTimeout:
+                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "network"})
                 return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
+            except PlaywrightError:
+                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "browser"})
+                return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
+            try:
+                page.wait_for_load_state("networkidle", timeout=min(3000, int(timeout * 1000)))
+            except PlaywrightTimeout:
+                pass
             page.wait_for_timeout(250)
             observed = page.evaluate(_SIGNALS)
             verdict = classify(
@@ -158,6 +166,8 @@ def capture_html(
                     "markers": observed.get("markers") or [],
                     "iframes": observed.get("iframes") or [],
                     "scripts": observed.get("scripts") or [],
+                    "ready": observed.get("ready") or "",
+                    "rendered": True,
                     "elapsed_ms": int((time.perf_counter() - started) * 1000),
                 }
             )
@@ -232,7 +242,7 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
     validated = validate_url(url, allow_local=allow_local)
     status_info = browser_status()
     if not status_info["playwright"] or not status_info["chrome"]:
-        return classify({"url": validated.url, "navigation_error": "navegador de captura indisponível"})
+        return classify({"url": validated.url, "navigation_error": "browser"})
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
     from playwright.sync_api import sync_playwright
@@ -253,8 +263,14 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             page.route("**/*", guard)
             try:
                 response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
-            except (PlaywrightTimeout, PlaywrightError):
-                return classify({"url": validated.url, "final_url": validated.url, "navigation_error": "navegação não concluída"})
+            except PlaywrightTimeout:
+                return classify({"url": validated.url, "final_url": validated.url, "navigation_error": "network"})
+            except PlaywrightError:
+                return classify({"url": validated.url, "final_url": validated.url, "navigation_error": "browser"})
+            try:
+                page.wait_for_load_state("networkidle", timeout=min(3000, int(timeout * 1000)))
+            except PlaywrightTimeout:
+                pass
             page.wait_for_timeout(200)
             observed = page.evaluate(_SIGNALS)
             return classify(
@@ -267,6 +283,8 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
                     "markers": observed.get("markers") or [],
                     "iframes": observed.get("iframes") or [],
                     "scripts": observed.get("scripts") or [],
+                    "ready": observed.get("ready") or "",
+                    "rendered": True,
                 }
             )
         finally:
