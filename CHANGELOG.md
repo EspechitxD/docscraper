@@ -1,5 +1,13 @@
 # Changelog
 
+## Knowledge AI — 20 de novembro de 2026
+
+- Biblioteca local em cima dos documentos já processados: segmentos, FTS5, vetor `cpmh-hash-v1` e respostas com citação validada.
+- Revisão de região atualiza o índice. Excluir o documento tira o texto da busca.
+- Consulta por documento, projeto, biblioteca e acervo global, com conversas persistentes.
+- Sem modelo de linguagem instalado, a resposta é extrativa. Não há download automático nem fine-tuning.
+- A suíte passou com 37 testes. O artigo SciELO de 27 páginas foi indexado em 3,184 s nesta máquina.
+
 ## Benchmark SciELO — 20 de novembro de 2026
 
 - O artigo da SciELO (27 páginas, DOI 10.1590/S0104-40362025003305115) foi processado pelo backend e comparado com o `pypdf`.

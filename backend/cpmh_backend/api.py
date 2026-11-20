@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import secrets
 import uuid
 from pathlib import Path
@@ -279,6 +280,13 @@ def _sync_region(db: Session, item: OCRRegion, operation: str, before: dict, ori
     )
     if document is not None:
         refresh_document_representation(db, document)
+        try:
+            with db.begin_nested():
+                from cpmh_backend.knowledge.index import index_document
+
+                index_document(db, document)
+        except Exception:
+            logging.getLogger("cpmh").exception("A revisão foi salva, mas a reindexação falhou")
 
 
 def job_out(item: ProcessingJob) -> dict:
@@ -703,6 +711,13 @@ def delete_document(document_id: str, db: Session = Depends(get_db)):
     import shutil
 
     folder = document_dir(get_settings(), item.project_id, item.id)
+    try:
+        with db.begin_nested():
+            from cpmh_backend.knowledge.index import purge_document
+
+            purge_document(db, document_id)
+    except Exception:
+        logging.getLogger("cpmh").exception("Falha ao remover o documento da biblioteca de conhecimento")
     db.delete(item)
     if folder.exists():
         shutil.rmtree(folder, ignore_errors=True)

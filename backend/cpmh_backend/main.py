@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from cpmh_backend import __version__
 from cpmh_backend.api import router
+from cpmh_backend.knowledge.routes import router as knowledge_router
 from cpmh_backend.config import get_settings
 from cpmh_backend.db import init_db
 from cpmh_backend.logging_setup import setup_logging
@@ -41,6 +42,7 @@ def create_app(*, start_worker: bool = True) -> FastAPI:
         allow_credentials=False,
     )
     app.include_router(router, prefix="/api")
+    app.include_router(knowledge_router, prefix="/api")
     if settings.static_dir and settings.static_dir.exists():
         app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="ui")
     return app

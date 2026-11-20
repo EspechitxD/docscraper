@@ -13,7 +13,7 @@ from cpmh_backend.config import Settings, get_settings
 from cpmh_backend.logging_setup import setup_logging
 from cpmh_backend.models import Base, PreferenceProfile, SchemaMigration, UserPreference, utcnow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 DEFAULT_PREFERENCES: dict[str, object] = {
     "ui_language": "pt-BR",
@@ -96,6 +96,12 @@ def _migrate_additive(engine: Engine) -> None:
         names = {row[1] for row in rows}
         if names and "evidence" not in names:
             connection.execute(text("ALTER TABLE ocr_regions ADD COLUMN evidence TEXT DEFAULT ''"))
+        connection.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5("
+                "chunk_id UNINDEXED, content, tokenize='unicode61')"
+            )
+        )
 
 
 def reset_db() -> None:

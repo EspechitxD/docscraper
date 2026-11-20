@@ -186,6 +186,13 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     if not _stage(session, job, document, "translating", 82):
         return
     _translate(session, job, document, options, allow_local, timeout)
+    try:
+        with session.begin_nested():
+            from cpmh_backend.knowledge.index import index_document
+
+            index_document(session, document)
+    except Exception:
+        logger.exception("A indexação da biblioteca não impediu o restante do processamento")
     export_formats = options.get("export_formats") or []
     output_dir = options.get("output_dir") or preference_value(session, "default_output_dir") or ""
     if export_formats and output_dir:

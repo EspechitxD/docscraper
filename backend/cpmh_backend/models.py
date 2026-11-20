@@ -353,3 +353,121 @@ class SchemaMigration(Base):
 
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
     applied_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeLibrary(Base):
+    __tablename__ = "knowledge_libraries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (Index("ix_knowledge_chunks_doc", "document_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    library_id: Mapped[str] = mapped_column(ForeignKey("knowledge_libraries.id", ondelete="CASCADE"))
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    page_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    section: Mapped[str] = mapped_column(Text, default="")
+    element_type: Mapped[str] = mapped_column(String(32), default="paragraph")
+    content: Mapped[str] = mapped_column(Text, default="")
+    source_region_id: Mapped[str] = mapped_column(String(36), default="")
+    source_element_id: Mapped[str] = mapped_column(String(36), default="")
+    revision_version: Mapped[int] = mapped_column(Integer, default=0)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeEmbedding(Base):
+    __tablename__ = "knowledge_embeddings"
+    __table_args__ = (Index("ix_knowledge_embeddings_chunk", "chunk_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(ForeignKey("knowledge_chunks.id", ondelete="CASCADE"))
+    model_id: Mapped[str] = mapped_column(String(80))
+    dimensions: Mapped[int] = mapped_column(Integer, default=0)
+    vector: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeConversation(Base):
+    __tablename__ = "knowledge_conversations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(200), default="Conversa")
+    scope: Mapped[str] = mapped_column(String(16), default="project")
+    project_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    library_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeMessage(Base):
+    __tablename__ = "knowledge_messages"
+    __table_args__ = (Index("ix_knowledge_messages_conversation", "conversation_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    conversation_id: Mapped[str] = mapped_column(ForeignKey("knowledge_conversations.id", ondelete="CASCADE"))
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text, default="")
+    citations: Mapped[list] = mapped_column(JSON, default=list)
+    mode: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class KnowledgeEntity(Base):
+    __tablename__ = "knowledge_entities"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    library_id: Mapped[str] = mapped_column(String(36))
+    document_id: Mapped[str] = mapped_column(String(36), default="")
+    chunk_id: Mapped[str] = mapped_column(String(36), default="")
+    name: Mapped[str] = mapped_column(String(300))
+    kind: Mapped[str] = mapped_column(String(32), default="concept")
+    origin: Mapped[str] = mapped_column(String(16), default="extracted")
+
+
+class KnowledgeRelation(Base):
+    __tablename__ = "knowledge_relations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    library_id: Mapped[str] = mapped_column(String(36))
+    source_id: Mapped[str] = mapped_column(String(36))
+    target_id: Mapped[str] = mapped_column(String(36))
+    relation: Mapped[str] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(16), default="extracted")
+    chunk_id: Mapped[str] = mapped_column(String(36), default="")
+    evidence: Mapped[str] = mapped_column(Text, default="")
+
+
+class KnowledgeModel(Base):
+    __tablename__ = "knowledge_models"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    name: Mapped[str] = mapped_column(String(200))
+    path: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    license_name: Mapped[str] = mapped_column(String(120), default="")
+    quantization: Mapped[str] = mapped_column(String(32), default="")
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    profile: Mapped[str] = mapped_column(String(32), default="")
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TrainingExample(Base):
+    __tablename__ = "knowledge_training_examples"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    document_id: Mapped[str] = mapped_column(String(36), default="")
+    source: Mapped[str] = mapped_column(String(32), default="user_reviewed")
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
