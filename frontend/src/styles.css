@@ -205,6 +205,9 @@ tr.clickable:hover td { background: #fafafa; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 8px 0; font-size: 11px; color: var(--secondary); }
 .swatch { width: 10px; height: 10px; border: 1.5px solid currentColor; display: inline-block; margin-right: 4px; vertical-align: -1px; }
 .browser-slot { height: 560px; border: 1px dashed var(--slate); background: repeating-linear-gradient(-45deg, #f7f7f7, #f7f7f7 8px, #ededed 8px, #ededed 16px); }
+.image-review { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+.image-preview { background: var(--paper); border: 1px solid var(--line); }
+@media (max-width: 900px) { .image-review { grid-template-columns: 1fr; } }
 .kv { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 6px 10px; font-size: 13px; }
 .kv span { color: var(--secondary); }
 .check { display: flex; gap: 8px; align-items: center; font-size: 13px; }

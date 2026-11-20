@@ -59,6 +59,51 @@ def argos_available(source: str = "en", target: str = "pt") -> bool:
     return sources[0].get_translation(targets[0]) is not None
 
 
+def translation_runtime() -> dict:
+    """Estado real do motor neural. Este processo não baixa modelos."""
+    try:
+        import argostranslate.translate
+    except Exception:
+        return {
+            "library_installed": False,
+            "neural_ready": False,
+            "pairs": [],
+            "silent_download": False,
+            "state": "unavailable",
+            "message": "Argos Translate não está instalado. A tradução usa só o glossário e fica parcial.",
+        }
+    try:
+        languages = argostranslate.translate.get_installed_languages()
+    except Exception as exc:
+        return {
+            "library_installed": True,
+            "neural_ready": False,
+            "pairs": [],
+            "silent_download": False,
+            "state": "error",
+            "message": f"Não foi possível ler os modelos instalados: {exc}",
+        }
+    pairs = []
+    for source in languages:
+        for target in languages:
+            if source.code == target.code:
+                continue
+            try:
+                ready = source.get_translation(target) is not None
+            except Exception:
+                ready = False
+            if ready:
+                pairs.append({"source": source.code, "target": target.code})
+    return {
+        "library_installed": True,
+        "neural_ready": bool(pairs),
+        "pairs": pairs,
+        "silent_download": False,
+        "state": "completed" if pairs else "unavailable",
+        "message": "Modelos locais encontrados." if pairs else "A biblioteca está presente, mas nenhum par linguístico está instalado.",
+    }
+
+
 def translate_with_argos(text: str, source: str = "en", target: str = "pt") -> str | None:
     if not text.strip() or not argos_available(source, target):
         return None

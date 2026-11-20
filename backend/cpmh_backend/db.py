@@ -13,7 +13,7 @@ from cpmh_backend.config import Settings, get_settings
 from cpmh_backend.logging_setup import setup_logging
 from cpmh_backend.models import Base, PreferenceProfile, SchemaMigration, UserPreference, utcnow
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 DEFAULT_PREFERENCES: dict[str, object] = {
     "ui_language": "pt-BR",
@@ -75,6 +75,7 @@ def init_db(settings: Settings | None = None) -> Engine:
         _Session = sessionmaker(bind=_engine, expire_on_commit=False, autoflush=False, future=True)
     assert _engine is not None
     Base.metadata.create_all(_engine)
+    _migrate_additive(_engine)
     with session_scope() as session:
         current = session.scalar(select(SchemaMigration.version).order_by(SchemaMigration.version.desc()))
         if not current:
@@ -86,6 +87,15 @@ def init_db(settings: Settings | None = None) -> Engine:
     _maybe_backup(settings)
     _purge_cache(settings)
     return _engine
+
+
+def _migrate_additive(engine: Engine) -> None:
+    """Acrescenta colunas novas. Não apaga dados nem recria tabelas."""
+    with engine.begin() as connection:
+        rows = connection.execute(text("PRAGMA table_info(ocr_regions)")).fetchall()
+        names = {row[1] for row in rows}
+        if names and "evidence" not in names:
+            connection.execute(text("ALTER TABLE ocr_regions ADD COLUMN evidence TEXT DEFAULT ''"))
 
 
 def reset_db() -> None:

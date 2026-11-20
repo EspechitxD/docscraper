@@ -143,7 +143,14 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     local = _ensure_source(session, settings, job, document, folder, allow_local, max_bytes, timeout, force)
     if not _stage(session, job, document, "capturing", 15):
         return
-    if document.source_kind == "pdf":
+    existing_region = session.scalar(
+        select(OCRRegion.id).where(OCRRegion.document_id == document.id, OCRRegion.deleted.is_(False)).limit(1)
+    )
+    resume = bool((job.checkpoint or {}).get("pages_done"))
+    keep_review = existing_region is not None and not force and not resume
+    if keep_review:
+        _step(session, job, "ocr", "skipped", "Revisão existente preservada. A captura não foi refeita.")
+    elif document.source_kind == "pdf":
         _persist_pdf(session, job, document, Path(local), languages, folder)
     elif document.source_kind == "html":
         from cpmh_backend.services.capture import capture_html
@@ -172,7 +179,8 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
         return
     if not _stage(session, job, document, "structuring", 70):
         return
-    _rebuild_elements(session, document)
+    if not keep_review:
+        _rebuild_elements(session, document)
     _continue_tables(session, document)
     _detect_document_language(session, document)
     if not _stage(session, job, document, "translating", 82):
@@ -375,6 +383,7 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
             original_w=block.bbox[2],
             original_h=block.bbox[3],
             source=block.source,
+            evidence=block.notes or "",
             deleted=False,
             created_at=utcnow(),
             updated_at=utcnow(),
@@ -495,7 +504,7 @@ def _rebuild_elements(session, document: Document) -> None:
                 level=1 if region.category == "title" else (2 if region.category == "subtitle" else 0),
                 page_ids=[page.id],
                 region_ids=[region.id],
-                metadata_json={"page_sequence": page.sequence},
+                metadata_json={"page_sequence": page.sequence, "evidence": region.evidence or ""},
                 skip_export=False,
             )
             session.add(element)
@@ -556,15 +565,21 @@ def _detect_document_language(session, document: Document) -> None:
 
 
 def _translate(session, job, document, options, allow_local, timeout) -> None:
-    mode = options.get("translate_mode") or "none"
+    from cpmh_backend.translation_modes import normalize_translation_mode
+
+    try:
+        mode = normalize_translation_mode(options.get("translate_mode") or "none")
+    except ValueError:
+        _step(session, job, "translating", "failed", "Modo de tradução desconhecido.")
+        return
     if mode == "none":
         _step(session, job, "translating", "skipped", "Tradução não solicitada.")
         return
     session.execute(delete(TranslationRecord).where(TranslationRecord.document_id == document.id))
-    glossary_id = options.get("glossary_id")
-    if not glossary_id:
-        project = document.project
-        glossary_id = project.glossary_id if project is not None else None
+    project = document.project
+    project_glossary = project.glossary_id if project is not None else None
+    requested = options.get("glossary_id") or None
+    glossary_id = project_glossary or requested
     terms = []
     if glossary_id:
         terms = session.scalars(select(GlossaryTerm).where(GlossaryTerm.glossary_id == glossary_id)).all()
@@ -587,7 +602,7 @@ def _translate(session, job, document, options, allow_local, timeout) -> None:
     for element in elements:
         if element.skip_export or element.kind in {"header", "footer", "page_number"}:
             continue
-        if mode == "selection" and not (selected & set(element.region_ids or [])):
+        if mode == "selected_regions" and not (selected & set(element.region_ids or [])):
             continue
         result = translate_text(
             element.text,

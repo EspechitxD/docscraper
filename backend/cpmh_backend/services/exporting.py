@@ -29,6 +29,8 @@ from cpmh_backend.models import (
     ExportedFile,
     FormulaRecord,
     ImageAsset,
+    OCRRegion,
+    RegionRevision,
     TableRecord,
     TranslationRecord,
     utcnow,
@@ -67,10 +69,18 @@ def export_document(
     translate_mode: str = "none",
     job_id: str | None = None,
 ) -> list[dict]:
+    from cpmh_backend.services.representation import refresh_document_representation
+    from cpmh_backend.translation_modes import normalize_translation_mode
+
     if not formats:
         raise AppError("Escolha ao menos um formato de exportação.")
     if mode not in {"visual", "editable", "translated"}:
         raise AppError("Modo de exportação desconhecido.")
+    try:
+        translate_mode = normalize_translation_mode(translate_mode)
+    except ValueError as exc:
+        raise AppError("Modo de tradução desconhecido.") from exc
+    refresh_document_representation(session, document)
     destination = assert_output_dir_allowed(Path(output_dir), install_dir=settings.install_dir)
     base_name = safe_filename(output_name)
     stem = Path(base_name).stem
@@ -88,6 +98,12 @@ def export_document(
     images = session.scalars(select(ImageAsset).where(ImageAsset.document_id == document.id)).all()
     formulas = session.scalars(select(FormulaRecord).where(FormulaRecord.document_id == document.id)).all()
     translations = session.scalars(select(TranslationRecord).where(TranslationRecord.document_id == document.id)).all()
+    regions = session.scalars(
+        select(OCRRegion).where(OCRRegion.document_id == document.id, OCRRegion.deleted.is_(False)).order_by(OCRRegion.y, OCRRegion.x)
+    ).all()
+    revisions = session.scalars(
+        select(RegionRevision).where(RegionRevision.document_id == document.id).order_by(RegionRevision.created_at)
+    ).all()
     produced: list[tuple[str, Path]] = []
     if "docx" in formats or "package" in formats:
         path = resolve_output_path(destination, f"{stem}.docx", collision)
@@ -99,12 +115,16 @@ def export_document(
         produced.append(("pdf", path))
     if "txt" in formats or "package" in formats:
         path = resolve_output_path(destination, f"{stem}.txt", collision)
-        path.write_text(_plain_text(elements, translations, mode, translate_mode), encoding="utf-8")
+        path.write_text(_plain_text(elements, translations, mode, translate_mode, images, tables), encoding="utf-8")
         produced.append(("txt", path))
     if "json" in formats or "package" in formats:
         path = resolve_output_path(destination, f"{stem}.json", collision)
         path.write_text(
-            json.dumps(_json_payload(document, elements, pages, tables, images, formulas, translations), ensure_ascii=False, indent=2),
+            json.dumps(
+                _json_payload(document, elements, pages, tables, images, formulas, translations, regions, revisions),
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
         produced.append(("json", path))
@@ -173,10 +193,15 @@ def _translation_map(translations) -> dict[str, TranslationRecord]:
     return mapped
 
 
+def _wants_translation(mode: str, translate_mode: str) -> bool:
+    return mode == "translated" or translate_mode in {"document_pt_br", "selected_regions", "bilingual"}
+
+
 def _text_for(element, translations: dict[str, TranslationRecord], mode: str, translate_mode: str) -> str:
     translated = translations.get(element.id)
-    use_translation = mode == "translated" or translate_mode in {"full", "portuguese_only", "selection"}
-    if use_translation and translated is not None:
+    if translate_mode == "bilingual":
+        return element.text
+    if _wants_translation(mode, translate_mode) and translated is not None:
         return translated.translated_text
     return element.text
 
@@ -196,7 +221,7 @@ def _write_docx(path, document, elements, pages, tables, images, formulas, trans
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
     _apply_header_footer(doc, elements)
-    note = _partial_note(translations) if mode == "translated" or translate_mode in {"full", "portuguese_only", "side_by_side"} else None
+    note = _partial_note(translations) if _wants_translation(mode, translate_mode) else None
     if note:
         paragraph = doc.add_paragraph(note)
         paragraph.runs[0].italic = True
@@ -223,7 +248,7 @@ def _write_docx(path, document, elements, pages, tables, images, formulas, trans
     sequences = sorted(set(grouped) | {table.page_sequence for table in tables})
     for sequence in sequences:
         for element in grouped.get(sequence, []):
-            if translate_mode == "side_by_side" and element.id in trans:
+            if translate_mode == "bilingual" and element.id in trans:
                 table = doc.add_table(rows=1, cols=2)
                 table.style = "Table Grid"
                 table.rows[0].cells[0].text = element.text
@@ -283,10 +308,11 @@ def _add_docx_table(doc: Document, table: TableRecord) -> None:
 
 
 def _add_docx_formula(doc: Document, formula: FormulaRecord) -> None:
-    if formula.reliable and formula.text:
-        paragraph = doc.add_paragraph(formula.text, style="Normal")
-        if paragraph.runs:
-            paragraph.runs[0].italic = True
+    if formula.reliable and formula.text and not any(char in formula.text for char in "∫∑∏√"):
+        paragraph = doc.add_paragraph()
+        paragraph._p.append(_omml(formula.text))
+        if formula.image_path and Path(formula.image_path).exists():
+            doc.add_picture(formula.image_path, width=Cm(6))
         return
     if formula.image_path and Path(formula.image_path).exists():
         doc.add_picture(formula.image_path, width=Cm(8))
@@ -351,7 +377,7 @@ def _write_pdf(path, document, elements, pages, tables, images, formulas, transl
     styles.add(ParagraphStyle(name="CPMHTitle", parent=styles["Title"], fontName=font, fontSize=18, leading=22, textColor=colors.HexColor("#29282A")))
     styles.add(ParagraphStyle(name="CPMHHeading", parent=styles["Heading2"], fontName=font, fontSize=13, leading=16, textColor=colors.HexColor("#F25620")))
     story = []
-    note = _partial_note(translations) if mode == "translated" or translate_mode in {"full", "portuguese_only", "side_by_side"} else None
+    note = _partial_note(translations) if _wants_translation(mode, translate_mode) else None
     if note:
         story.append(Paragraph(_xml(note), styles["CPMHBody"]))
         story.append(Spacer(1, 0.3 * cm))
@@ -370,7 +396,7 @@ def _write_pdf(path, document, elements, pages, tables, images, formulas, transl
             if not text:
                 continue
             style = styles["CPMHTitle"] if element.kind == "title" else styles["CPMHHeading"] if element.level or element.kind == "subtitle" else styles["CPMHBody"]
-            if translate_mode == "side_by_side" and element.id in trans:
+            if translate_mode == "bilingual" and element.id in trans:
                 data = [[Paragraph(_xml(element.text), styles["CPMHBody"]), Paragraph(_xml(trans[element.id].translated_text), styles["CPMHBody"])]]
                 story.append(Table(data, colWidths=[8 * cm, 8 * cm]))
             else:
@@ -401,17 +427,17 @@ def _write_pdf(path, document, elements, pages, tables, images, formulas, transl
     pdf.build(story)
 
 
-def _plain_text(elements, translations, mode, translate_mode) -> str:
+def _plain_text(elements, translations, mode, translate_mode, images=(), tables=()) -> str:
     trans = _translation_map(translations)
     lines = []
-    note = _partial_note(translations) if mode == "translated" else None
+    note = _partial_note(translations) if _wants_translation(mode, translate_mode) else None
     if note:
         lines.append(note)
         lines.append("")
     for element in elements:
         if element.skip_export or element.kind in {"header", "footer", "page_number"}:
             continue
-        if translate_mode == "side_by_side" and element.id in trans:
+        if translate_mode == "bilingual" and element.id in trans:
             lines.append(element.text)
             lines.append(trans[element.id].translated_text)
         else:
@@ -419,10 +445,24 @@ def _plain_text(elements, translations, mode, translate_mode) -> str:
             if text:
                 lines.append(text)
         lines.append("")
+    written = {line.strip() for line in lines if line.strip()}
+    for table in tables:
+        for row in getattr(table, "rows", None) or []:
+            line = " | ".join(str(cell or "").strip() for cell in row).strip(" |")
+            if line and line not in written:
+                lines.append(line)
+                lines.append("")
+                written.add(line)
+    for image in images:
+        caption = (getattr(image, "caption", "") or "").strip()
+        if caption and caption not in written:
+            lines.append(caption)
+            lines.append("")
+            written.add(caption)
     return "\n".join(lines).strip() + "\n"
 
 
-def _json_payload(document, elements, pages, tables, images, formulas, translations) -> dict:
+def _json_payload(document, elements, pages, tables, images, formulas, translations, regions=(), revisions=()) -> dict:
     return {
         "document": {
             "id": document.id,
@@ -500,14 +540,88 @@ def _json_payload(document, elements, pages, tables, images, formulas, translati
             {
                 "id": item.id,
                 "element_id": item.element_id,
+                "mode": item.mode,
                 "provider": item.provider,
                 "partial": item.partial,
+                "state": "partial" if item.partial or item.provider == "glossary" else "completed",
                 "source_text": item.source_text,
                 "translated_text": item.translated_text,
             }
             for item in translations
         ],
+        "regions": [
+            {
+                "id": region.id,
+                "page_id": region.page_id,
+                "category": region.category,
+                "text": region.text,
+                "bbox": [region.x, region.y, region.w, region.h],
+                "review_state": region.review_state,
+                "evidence": region.evidence,
+            }
+            for region in regions
+        ],
+        "revisions": [
+            {
+                "id": revision.id,
+                "region_id": revision.region_id,
+                "operation": revision.operation,
+                "origin": revision.origin,
+                "original_text": revision.original_text,
+                "revised_text": revision.revised_text,
+                "original_category": revision.original_category,
+                "revised_category": revision.revised_category,
+                "created_at": revision.created_at.isoformat() if revision.created_at else "",
+            }
+            for revision in revisions
+        ],
     }
+
+
+def _omml(text: str):
+    from docx.oxml import parse_xml
+
+    supers = {"²": "2", "³": "3", "¹": "1"}
+    chunks: list[tuple[str, str]] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        if buffer:
+            chunks.append(("t", "".join(buffer)))
+            buffer.clear()
+
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char in supers:
+            flush()
+            chunks.append(("sup", supers[char]))
+            index += 1
+            continue
+        if char == "^" and index + 1 < len(text) and text[index + 1].isdigit():
+            flush()
+            chunks.append(("sup", text[index + 1]))
+            index += 2
+            continue
+        buffer.append(char)
+        index += 1
+    flush()
+    body: list[str] = []
+    for kind, value in chunks:
+        safe = _xml(value)
+        if kind == "sup" and body:
+            previous = body.pop()
+            body.append(f"<m:sSup><m:e>{previous}</m:e><m:sup><m:r><m:t>{safe}</m:t></m:r></m:sup></m:sSup>")
+        elif kind == "sup":
+            body.append(f"<m:sSup><m:e><m:r><m:t></m:t></m:r></m:e><m:sup><m:r><m:t>{safe}</m:t></m:r></m:sup></m:sSup>")
+        else:
+            body.append(f'<m:r><m:t xml:space="preserve">{safe}</m:t></m:r>')
+    markup = (
+        '<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        + "".join(body)
+        + "</m:oMath>"
+    )
+    return parse_xml(markup)
 
 
 def _xml(text: str) -> str:

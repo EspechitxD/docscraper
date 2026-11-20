@@ -15,6 +15,35 @@ let mainWindow: BrowserWindow | null = null;
 let browserView: WebContentsView | null = null;
 let sessionInfo: SessionInfo = { apiBase: "", token: "" };
 let allowedBrowserUrl = "";
+let lastOverlay: unknown = null;
+
+function stopRecordedBackend(): void {
+  const pidFile = path.join(app.getPath("userData"), "backend.pid");
+  if (!fs.existsSync(pidFile)) {
+    return;
+  }
+  const pid = Number(fs.readFileSync(pidFile, "utf8"));
+  if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* o processo anterior já não existe */
+    }
+  }
+  fs.rmSync(pidFile, { force: true });
+}
+
+async function installOverlay(): Promise<void> {
+  const contents = browserView?.webContents;
+  if (!contents) {
+    return;
+  }
+  const source = fs.readFileSync(path.join(__dirname, "overlay.js"), "utf8");
+  await contents.executeJavaScript(source);
+  if (lastOverlay) {
+    await contents.executeJavaScript(`window.cpmhApplyOverlay(${JSON.stringify(lastOverlay)})`);
+  }
+}
 
 function projectRoot(): string {
   return path.resolve(__dirname, "..", "..");
@@ -30,6 +59,12 @@ function pythonLaunch(): { command: string; args: string[]; pythonPath: string }
   }
   if (!app.isPackaged && fs.existsSync(win)) {
     return { command: win, args: ["-m", "cpmh_backend"], pythonPath: path.join(root, "backend") };
+  }
+  if (app.isPackaged) {
+    if (!fs.existsSync(bundled)) {
+      throw new Error("O backend empacotado não foi encontrado. A instalação está incompleta e o Python do sistema não será usado.");
+    }
+    return { command: bundled, args: [], pythonPath: "" };
   }
   if (fs.existsSync(bundled)) {
     return { command: bundled, args: [], pythonPath: "" };
@@ -142,6 +177,9 @@ function ensureBrowserView(): WebContentsView {
     event.preventDefault();
     void openAuthorized(url);
   });
+  view.webContents.on("did-finish-load", () => {
+    void installOverlay();
+  });
   mainWindow?.contentView.addChildView(view);
   browserView = view;
   return view;
@@ -182,13 +220,26 @@ async function startBackend(): Promise<void> {
     PYTHONPATH: launch.pythonPath || process.env.PYTHONPATH || "",
     PYTHONUNBUFFERED: "1",
   };
+  stopRecordedBackend();
   backend = spawn(launch.command, launch.args, {
     env,
     stdio: "pipe",
     windowsHide: true,
   });
-  backend.stdout.on("data", (chunk: Buffer) => process.stdout.write(chunk));
-  backend.stderr.on("data", (chunk: Buffer) => process.stderr.write(chunk));
+  const logDir = path.join(app.getPath("userData"), "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  const logStream = fs.createWriteStream(path.join(logDir, "backend.log"), { flags: "a" });
+  backend.stdout.on("data", (chunk: Buffer) => {
+    process.stdout.write(chunk);
+    logStream.write(chunk);
+  });
+  backend.stderr.on("data", (chunk: Buffer) => {
+    process.stderr.write(chunk);
+    logStream.write(chunk);
+  });
+  if (backend.pid) {
+    fs.writeFileSync(path.join(app.getPath("userData"), "backend.pid"), String(backend.pid));
+  }
   backend.on("exit", (code) => {
     if (code && code !== 0 && mainWindow && !mainWindow.isDestroyed()) {
       dialog.showErrorBox("CPMH Document Intelligence", `O backend local encerrou com código ${code}.`);
@@ -284,6 +335,13 @@ function registerIpc(): void {
     return next;
   });
   ipcMain.handle("browser-state", () => browserSnapshot());
+  ipcMain.handle("browser-overlay", async (_event, payload: unknown) => {
+    lastOverlay = payload;
+    if (!browserView) {
+      return;
+    }
+    await installOverlay();
+  });
 }
 
 app.whenReady().then(async () => {

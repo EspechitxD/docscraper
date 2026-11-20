@@ -8,11 +8,11 @@
   "scripts": {
     "dev:ui": "vite --config frontend/vite.config.ts --host 127.0.0.1 --port 5173",
     "build:ui": "vite build --config frontend/vite.config.ts",
-    "build:electron": "tsc -p electron/tsconfig.json",
+    "build:electron": "tsc -p electron/tsconfig.json && cp electron/overlay.js electron/dist/overlay.js",
     "dev": "npm run build:electron && concurrently -k \"npm run dev:ui\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "start": "npm run build:ui && npm run build:electron && electron .",
     "typecheck": "tsc -p frontend/tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
-    "dist:win": "npm run build:ui && npm run build:electron && electron-builder --win nsis --x64"
+    "dist:win": "npm run build:ui && npm run build:electron && python3 scripts/stage_runtime.py && electron-builder --win nsis --x64"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
@@ -58,6 +58,10 @@
       {
         "from": "assets/icons",
         "to": "icons"
+      },
+      {
+        "from": "build/runtime",
+        "to": "runtime"
       }
     ],
     "win": {

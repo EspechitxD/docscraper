@@ -5,6 +5,8 @@ import { Button, Field, Modal, Notice, Progress } from "../components/ui";
 import { formatWhen, stateLabel } from "../labels";
 import type { DocumentItem, Project } from "../types";
 
+type GlossaryRow = { id: string; name: string };
+
 export function ProjectScreen() {
   const { projectId = "" } = useParams();
   const navigate = useNavigate();
@@ -20,6 +22,7 @@ export function ProjectScreen() {
   const [info, setInfo] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [editing, setEditing] = useState<DocumentItem | null>(null);
+  const [glossaries, setGlossaries] = useState<GlossaryRow[]>([]);
 
   async function load() {
     const [current, rows] = await Promise.all([
@@ -29,6 +32,8 @@ export function ProjectScreen() {
     setProject(current);
     setName(current.name);
     setDocuments(rows);
+    const lists = await api<GlossaryRow[]>("/glossaries");
+    setGlossaries(lists);
   }
 
   useEffect(() => {
@@ -154,6 +159,20 @@ export function ProjectScreen() {
         <form className="panel stack" onSubmit={(event) => { event.preventDefault(); void saveProject(); }}>
           <h2>Identidade do projeto</h2>
           <Field label="Nome"><input className="field" value={name} onChange={(event) => setName(event.target.value)} /></Field>
+          <Field label="Glossário deste projeto">
+            <select
+              className="select"
+              value={project?.glossary_id || ""}
+              onChange={(event) => {
+                const glossaryId = event.target.value || null;
+                void api(`/projects/${projectId}`, { method: "PATCH", body: JSON.stringify({ glossary_id: glossaryId }) }).then(load);
+              }}
+            >
+              <option value="">Nenhum glossário associado</option>
+              {glossaries.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+          <p className="lede">A tradução deste projeto usa somente o glossário associado. O glossário de outro projeto não é aplicado.</p>
           <Button type="submit" kind="secondary">Renomear</Button>
         </form>
       </div>

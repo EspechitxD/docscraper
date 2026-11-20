@@ -77,6 +77,7 @@ export type Region = {
   original_text: string;
   original_category: string;
   original_bbox: [number, number, number, number];
+  evidence?: string;
 };
 
 export type ElementItem = {
@@ -102,6 +103,10 @@ export type ImageItem = {
   width: number;
   height: number;
   page_id: string;
+  bbox?: [number, number, number, number];
+  format?: string;
+  review_state?: string;
+  page_sequence?: number | null;
 };
 
 export type TableItem = {

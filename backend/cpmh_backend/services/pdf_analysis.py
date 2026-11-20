@@ -64,6 +64,8 @@ def detect_ruled_tables(image: Image.Image) -> list[dict]:
                 "bbox": (x / width, y / height, box_w / width, box_h / height),
                 "rows": max(len(row_lines) - 1, 1),
                 "cols": max(len(col_lines) - 1, 1),
+                "row_lines": [(y + center) / height for center in row_lines],
+                "col_lines": [(x + center) / width for center in col_lines],
             }
         )
     return found
@@ -131,6 +133,116 @@ def analyze_pdf(path: Path, languages: list[str]) -> dict:
     return {"page_count": len(pages), "pages": pages}
 
 
+def _overlaps(first: tuple[float, float, float, float], second: tuple[float, float, float, float]) -> float:
+    ax, ay, aw, ah = first
+    bx, by, bw, bh = second
+    width = min(ax + aw, bx + bw) - max(ax, bx)
+    height = min(ay + ah, by + bh) - max(ay, by)
+    if width <= 0 or height <= 0:
+        return 0.0
+    return width * height
+
+
+def _grid_from_ruled_box(words: list, box: dict) -> list[list[str]] | None:
+    row_lines = box.get("row_lines") or []
+    col_lines = box.get("col_lines") or []
+    if len(row_lines) < 2 or len(col_lines) < 2:
+        return None
+    buckets = [[[] for _ in range(len(col_lines) - 1)] for _ in range(len(row_lines) - 1)]
+    for word in words:
+        cx = word.bbox[0] + word.bbox[2] / 2
+        cy = word.bbox[1] + word.bbox[3] / 2
+        row = next((index for index in range(len(row_lines) - 1) if row_lines[index] <= cy < row_lines[index + 1]), None)
+        column = next((index for index in range(len(col_lines) - 1) if col_lines[index] <= cx < col_lines[index + 1]), None)
+        if row is None or column is None:
+            continue
+        buckets[row][column].append(word)
+    grid = []
+    for row in buckets:
+        cells = []
+        for words_in_cell in row:
+            ordered = sorted(words_in_cell, key=lambda item: (round(item.bbox[1], 3), item.bbox[0]))
+            cells.append(" ".join(item.text for item in ordered).strip())
+        grid.append(cells)
+    filled = sum(1 for row in grid for cell in row if cell)
+    if filled < 4:
+        return None
+    return grid
+
+
+def _table_from_rules_or_text(words: list, ruled: list[dict], *, from_text_layer: bool) -> dict | None:
+    if not ruled:
+        return detect_text_table(words, from_text_layer=from_text_layer)
+    diagrams = _diagram_crops_boxes(ruled)
+    candidates = []
+    for box in ruled:
+        if any(_center_inside((box["bbox"][0], box["bbox"][1], box["bbox"][2], box["bbox"][3]), diagram) for diagram in diagrams):
+            continue
+        candidates.append(box)
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda item: item["bbox"][2] * item["bbox"][3])
+    inside = [word for word in words if _center_inside(word.bbox, best["bbox"])]
+    grid = _grid_from_ruled_box(inside, best)
+    if grid:
+        return {
+            "rows": grid,
+            "confidence": 94.0,
+            "reliable": True,
+            "source": "lines+text",
+            "bbox": best["bbox"],
+        }
+    return {
+        "rows": [],
+        "confidence": 35.0,
+        "reliable": False,
+        "source": "lines",
+        "bbox": best["bbox"],
+        "notes": "Linhas de tabela detectadas sem células de texto confiáveis.",
+    }
+
+
+def _diagram_crops_boxes(ruled: list[dict]) -> list[tuple[float, float, float, float]]:
+    if len(ruled) < 2:
+        return []
+    ordered = sorted(ruled, key=lambda item: item["bbox"][1])
+    groups: list[list[dict]] = [[ordered[0]]]
+    for box in ordered[1:]:
+        previous = groups[-1][-1]["bbox"]
+        if box["bbox"][1] - (previous[1] + previous[3]) < 0.08:
+            groups[-1].append(box)
+        else:
+            groups.append([box])
+    boxes = []
+    for group in groups:
+        if len(group) < 2:
+            continue
+        x = min(item["bbox"][0] for item in group)
+        y = min(item["bbox"][1] for item in group)
+        right = max(item["bbox"][0] + item["bbox"][2] for item in group)
+        bottom = max(item["bbox"][1] + item["bbox"][3] for item in group)
+        bbox = (max(x - 0.07, 0.0), max(y - 0.04, 0.0), min(right - x + 0.08, 1.0), min(bottom - y + 0.05, 1.0))
+        area = bbox[2] * bbox[3]
+        if bbox[2] < 0.25 or bbox[3] < 0.1:
+            continue
+        if any(item["bbox"][2] * item["bbox"][3] > area * 0.75 for item in group):
+            continue
+        boxes.append(bbox)
+    return boxes
+
+
+def _diagram_crops(image: Image.Image, ruled: list[dict]) -> list[dict]:
+    return [
+        {
+            "image": crop_normalized(image, bbox),
+            "bbox": bbox,
+            "category": "diagram",
+            "confidence": 70.0,
+        }
+        for bbox in _diagram_crops_boxes(ruled)
+    ]
+
+
 def _analyze_page(page, index: int, languages: list[str]) -> dict:
     page_width, page_height = page.get_size()
     text_page = page.get_textpage()
@@ -162,26 +274,14 @@ def _analyze_page(page, index: int, languages: list[str]) -> dict:
         blocks = blocks_from_pdf_chars(chars, page_width, page_height)
     embedded = _embedded_images(page, page_width, page_height)
     words = [word for block in blocks for word in block.words]
-    table = detect_text_table(words, from_text_layer=source == "pdf_text")
     ruled = detect_ruled_tables(image)
-    if table and ruled:
-        table["confidence"] = max(table["confidence"], 94.0)
-        table["reliable"] = True
-        table["source"] = table["source"] + "+lines"
-    elif not table and ruled:
-        table = {
-            "rows": [],
-            "confidence": 35.0,
-            "reliable": False,
-            "source": "lines",
-            "bbox": ruled[0]["bbox"],
-            "notes": "Linhas de tabela detectadas sem células de texto confiáveis.",
-        }
-    if table and "bbox" not in table:
-        table["bbox"] = (0.1, 0.2, 0.8, 0.3)
+    table = _table_from_rules_or_text(words, ruled, from_text_layer=source == "pdf_text")
+    diagram_boxes = _diagram_crops_boxes(ruled)
     kept: list[Block] = []
     for block in blocks:
         if table and table.get("rows") and _center_inside(block.bbox, table["bbox"]):
+            continue
+        if any(_center_inside(block.bbox, box) for box in diagram_boxes):
             continue
         kept.append(block)
     classify_blocks(kept)
@@ -195,6 +295,8 @@ def _analyze_page(page, index: int, languages: list[str]) -> dict:
     for embedded_image, bbox in embedded:
         category, confidence = guess_image_category(embedded_image)
         images.append({"image": embedded_image, "bbox": bbox, "category": category, "confidence": confidence})
+    for diagram in _diagram_crops(image, ruled):
+        images.append(diagram)
     blank = looks_blank(image) and not text
     partial = looks_partial(image) and not text
     return {
@@ -228,9 +330,11 @@ def _attach_captions(pages: list[dict]) -> None:
             best = None
             best_gap = 1.0
             for block in page["blocks"]:
-                gap = block.bbox[1] - (iy + ih)
+                below = block.bbox[1] - (iy + ih)
+                above = iy - (block.bbox[1] + block.bbox[3])
+                gap = below if 0 <= below else above
                 overlap = min(ix + iw, block.bbox[0] + block.bbox[2]) - max(ix, block.bbox[0])
-                if 0 <= gap < 0.06 and overlap > 0 and len(block.text) <= 180 and gap < best_gap:
+                if 0 <= gap < 0.08 and overlap > 0 and len(block.text) <= 180 and gap < best_gap:
                     best = block
                     best_gap = gap
             if best is not None:

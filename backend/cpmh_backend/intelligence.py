@@ -59,6 +59,7 @@ class Block:
     language: str = ""
     level: int = 0
     words: list[WordBox] = field(default_factory=list)
+    notes: str = ""
 
 
 @dataclass
@@ -146,7 +147,7 @@ def assess_formula(text: str) -> tuple[bool, str]:
     if len(stripped) > 80 or stripped.count("=") > 1:
         return False, "Expressão longa demais para reconstrução editável confiável."
     if _is_formula(stripped):
-        return True, "Expressão linear simples preservada como texto."
+        return True, "Expressão linear simples. O DOCX recebe equação OMML; o recorte original permanece."
     return False, "Reconhecimento insuficiente. O recorte original é preservado."
 
 
@@ -154,48 +155,109 @@ def _norm_key(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+_NUMBERED_HEADING = re.compile(r"^\d+(?:\.\d+){0,3}\s+\S")
+_BIBLIOGRAPHIC = re.compile(r"\b(?:19|20)\d{2}\b")
+_BIBLIOGRAPHIC_MARK = re.compile(r"\b(?:v\.|n\.|p\.)\b|doi\.org|https?://", re.IGNORECASE)
+
+
+def _looks_bibliographic(text: str) -> bool:
+    return bool(_BIBLIOGRAPHIC.search(text) and _BIBLIOGRAPHIC_MARK.search(text) and len(text) > 40)
+
+
+def _body_reference(blocks: list[Block]) -> tuple[float, float]:
+    """Tamanho do corpo pelo volume de caracteres, sem a nota de rodapé puxar o limiar."""
+    weighted: list[tuple[float, int]] = []
+    for block in blocks:
+        size = block.font_size or block.bbox[3]
+        weight = len(block.text.strip())
+        if size <= 0 or weight < 8:
+            continue
+        weighted.append((size, weight))
+    if not weighted:
+        return 0.02, 0.0
+    largest = max(size for size, _weight in weighted)
+    if len(weighted) == 1:
+        return weighted[0][0], largest
+    clusters: list[list[tuple[float, int]]] = []
+    for size, weight in sorted(weighted):
+        if not clusters or size - clusters[-1][0][0] > max(clusters[-1][0][0] * 0.12, 0.001):
+            clusters.append([(size, weight)])
+        else:
+            clusters[-1].append((size, weight))
+    body = max(clusters, key=lambda cluster: sum(item[1] for item in cluster))
+    mass = sum(item[1] for item in body)
+    reference = sum(size * weight for size, weight in body) / mass
+    return reference, largest
+
+
 def classify_blocks(blocks: list[Block]) -> list[Block]:
-    heights = [
-        block.font_size or block.bbox[3]
-        for block in blocks
-        if len(block.text.strip()) >= 8 and (block.font_size or block.bbox[3]) > 0
-    ]
-    median = statistics.median(heights) if heights else 0.02
+    reference, largest = _body_reference(blocks)
     for block in blocks:
         text = " ".join(block.text.split())
         block.text = text
         y = block.bbox[1]
         height = block.font_size or block.bbox[3]
+        centered = abs((block.bbox[0] + block.bbox[2] / 2) - 0.5) < 0.12
         if _PAGE_NUMBER.match(text):
             block.category = "page_number"
             block.level = 0
+            block.notes = "padrão de numeração de página"
             continue
         if _is_formula(text):
             block.category = "equation" if any(char in text for char in "∫∑∏√") else "formula"
             block.level = 0
+            block.notes = "símbolos matemáticos"
             continue
         if y < 0.055 and len(text) <= 160:
             block.category = "header"
+            block.notes = "faixa superior da página"
             continue
         if y > 0.925 and len(text) <= 180:
             block.category = "footer"
+            block.notes = "faixa inferior da página"
             continue
         if _CAPTION.match(text):
             block.category = "caption"
+            block.notes = "prefixo de legenda"
             continue
-        if _REFERENCE.match(text):
+        if _REFERENCE.match(text) or _looks_bibliographic(text):
             block.category = "reference"
+            block.notes = "padrão de referência"
             continue
-        if height >= median * 1.22 and len(text) <= 90 and y < 0.35 and not text.endswith("."):
-            block.category = "title"
-            block.level = 1
-            continue
-        if height >= median * 1.18 and len(text) <= 120 and not text.endswith(".") and y < 0.7:
+        numbered = bool(_NUMBERED_HEADING.match(text)) and len(text) <= 120 and not text.endswith(".")
+        if numbered:
             block.category = "subtitle"
             block.level = 2
+            block.notes = "numeração de seção"
+            continue
+        ends_sentence = text.endswith((".", ";", ":"))
+        title_length = len(text) <= 220 and len(text.split()) <= 40
+        clearly_larger = height >= reference * 1.35 and title_length and not ends_sentence and y < 0.45
+        dominant = (
+            title_length
+            and not ends_sentence
+            and y < 0.36
+            and largest > 0
+            and height >= largest * 0.92
+            and height >= reference * 1.25
+        )
+        if clearly_larger or dominant:
+            block.category = "title"
+            block.level = 1
+            block.notes = "fonte maior que o corpo" + ("; centralizado" if centered else "")
+            continue
+        if height >= reference * 1.12 and len(text) <= 120 and not text.endswith(".") and y < 0.7:
+            block.category = "subtitle"
+            block.level = 2
+            block.notes = "numeração de seção" if numbered else "fonte intermediária"
+            continue
+        if len(text) < 8 and not text:
+            block.category = "unknown"
+            block.notes = "texto insuficiente"
             continue
         block.category = "paragraph"
         block.level = 0
+        block.notes = "texto corrido"
     return blocks
 
 
@@ -203,7 +265,9 @@ def mark_repeated_chrome(pages: list[list[Block]]) -> None:
     if len(pages) < 2:
         return
     tops: dict[str, int] = {}
+    top_sizes: dict[str, list[float]] = {}
     bottoms: dict[str, int] = {}
+    bottom_sizes: dict[str, list[float]] = {}
     for blocks in pages:
         seen_top: set[str] = set()
         seen_bottom: set[str] = set()
@@ -211,21 +275,32 @@ def mark_repeated_chrome(pages: list[list[Block]]) -> None:
             key = _norm_key(block.text)
             if len(key) < 2:
                 continue
-            if block.bbox[1] < 0.11 and key not in seen_top:
+            size = block.font_size or block.bbox[3]
+            if block.bbox[1] < 0.09 and key not in seen_top:
                 tops[key] = tops.get(key, 0) + 1
+                top_sizes.setdefault(key, []).append(size)
                 seen_top.add(key)
             if block.bbox[1] > 0.89 and key not in seen_bottom:
                 bottoms[key] = bottoms.get(key, 0) + 1
+                bottom_sizes.setdefault(key, []).append(size)
                 seen_bottom.add(key)
     for blocks in pages:
         for block in blocks:
             key = _norm_key(block.text)
             if block.category == "page_number":
                 continue
+            own = block.font_size or block.bbox[3]
             if key in tops and tops[key] >= 2 and block.bbox[1] < 0.12:
-                block.category = "header"
+                typical = statistics.median(top_sizes[key])
+                # O mesmo texto pode ser o título da primeira página e o cabeçalho das seguintes.
+                if own <= typical * 1.35 and block.bbox[3] <= max(0.05, typical * 3):
+                    block.category = "header"
+                    block.level = 0
             elif key in bottoms and bottoms[key] >= 2 and block.bbox[1] > 0.88:
-                block.category = "footer"
+                typical = statistics.median(bottom_sizes[key])
+                if own <= typical * 1.35:
+                    block.category = "footer"
+                    block.level = 0
 
 
 def reading_order(blocks: list[Block]) -> list[Block]:
@@ -280,43 +355,70 @@ def lines_from_words(words: list[WordBox]) -> list[list[WordBox]]:
     return lines
 
 
-def detect_text_table(words: list[WordBox], *, from_text_layer: bool = False) -> dict | None:
-    lines = lines_from_words(words)
-    if len(lines) < 2:
-        return None
-    split_sets: list[list[float]] = []
+def _column_splits(line: list[WordBox]) -> list[float]:
+    splits = []
+    for left, right in zip(line, line[1:]):
+        gap = right.bbox[0] - (left.bbox[0] + left.bbox[2])
+        if gap >= 0.055:
+            splits.append((left.bbox[0] + left.bbox[2] + right.bbox[0]) / 2)
+    return splits
+
+
+def _table_groups(lines: list[list[WordBox]]) -> list[list[list[WordBox]]]:
+    groups: list[list[list[WordBox]]] = []
+    current: list[list[WordBox]] = []
     for line in lines:
-        if len(line) < 2:
-            split_sets.append([])
+        y = min(word.bbox[1] for word in line)
+        if y < 0.07 or y > 0.925:
+            if current:
+                groups.append(current)
+                current = []
             continue
-        gaps = []
-        for left, right in zip(line, line[1:]):
-            gap = right.bbox[0] - (left.bbox[0] + left.bbox[2])
-            midpoint = (left.bbox[0] + left.bbox[2] + right.bbox[0]) / 2
-            gaps.append((gap, midpoint))
-        typical = statistics.median(gap for gap, _mid in gaps)
-        # Células de uma palavra têm só lacunas grandes e parecidas.
-        # Células com várias palavras têm lacunas internas pequenas e lacunas de coluna maiores.
-        splits = [mid for gap, mid in gaps if gap >= 0.06]
-        split_sets.append(splits)
-    aligned = [splits for splits in split_sets if splits]
-    if len(aligned) < 2:
+        splits = _column_splits(line)
+        if not splits:
+            if not current:
+                continue
+            previous = current[-1]
+            previous_bottom = max(word.bbox[1] + word.bbox[3] for word in previous)
+            gap = y - previous_bottom
+            if gap <= 0.035 and len(line) <= 6:
+                current.append(line)
+            else:
+                groups.append(current)
+                current = []
+            continue
+        if current:
+            previous_bottom = max(word.bbox[1] + word.bbox[3] for word in current[-1])
+            if y - previous_bottom > 0.05:
+                groups.append(current)
+                current = []
+        current.append(line)
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _grid_from_lines(lines: list[list[WordBox]]) -> tuple[list[list[str]], list[float], list[WordBox]] | None:
+    split_sets = [_column_splits(line) for line in lines]
+    supporting = [splits for splits in split_sets if splits]
+    if len(supporting) < 2:
         return None
-    columns = _cluster_values([value for splits in aligned for value in splits], gap=0.03)
-    if len(columns) < 1:
+    columns = _cluster_values([value for splits in supporting for value in splits], gap=0.03)
+    stable = []
+    for column in columns:
+        hits = sum(1 for splits in supporting if any(abs(value - column) <= 0.035 for value in splits))
+        if hits >= max(2, int(len(supporting) * 0.5)):
+            stable.append(column)
+    if not stable or len(stable) > 6:
         return None
-    # Uma divisão estável produz duas colunas.
-    if len(columns) < 1 or len(aligned) < 2:
-        return None
-    usable = [index for index, splits in enumerate(split_sets) if splits]
-    if len(usable) < 2:
-        return None
-    boundaries = [0.0, *columns, 1.0]
+    boundaries = [0.0, *stable, 1.0]
     grid: list[list[str]] = []
-    confidences: list[float] = []
-    for index in usable:
+    used: list[WordBox] = []
+    for line, splits in zip(lines, split_sets):
+        if not splits and len(line) > 6:
+            continue
         cells = [""] * (len(boundaries) - 1)
-        for word in lines[index]:
+        for word in line:
             center = word.bbox[0] + word.bbox[2] / 2
             column = 0
             for position, edge in enumerate(boundaries[1:]):
@@ -324,7 +426,7 @@ def detect_text_table(words: list[WordBox], *, from_text_layer: bool = False) ->
                     column = position
                     break
             cells[column] = (cells[column] + " " + word.text).strip()
-            confidences.append(word.confidence)
+            used.append(word)
         if any(cell.strip() for cell in cells):
             grid.append(cells)
     if len(grid) < 2 or len(grid[0]) < 2:
@@ -332,24 +434,40 @@ def detect_text_table(words: list[WordBox], *, from_text_layer: bool = False) ->
     cell_lengths = [len(cell.split()) for row in grid for cell in row if cell.strip()]
     if cell_lengths and statistics.median(cell_lengths) >= 4:
         return None
-    if grid and all(not re.search(r"[\w]", cell, re.UNICODE) for row in grid for cell in row):
-        return None
-    width = len(grid[0])
-    if any(len(row) != width for row in grid):
-        return None
     filled = sum(1 for row in grid for cell in row if cell.strip())
     if filled < 4:
         return None
-    confidence = statistics.fmean(confidences) if confidences else 60.0
-    # Texto digital alinhado não é inventado: veio da camada de texto.
-    # OCR alinhado permanece para revisão até haver confirmação visual das linhas.
+    return grid, stable, used
+
+
+def detect_text_table(words: list[WordBox], *, from_text_layer: bool = False) -> dict | None:
+    lines = lines_from_words(words)
+    if len(lines) < 2:
+        return None
+    best: tuple[list[list[str]], list[WordBox]] | None = None
+    best_score = 0
+    for group in _table_groups(lines):
+        built = _grid_from_lines(group)
+        if built is None:
+            continue
+        grid, _columns, used = built
+        if len(grid) < 3:
+            continue
+        score = sum(1 for row in grid for cell in row if cell.strip())
+        if score > best_score:
+            best = (grid, used)
+            best_score = score
+    if best is None:
+        return None
+    grid, used = best
+    confidence = statistics.fmean(word.confidence for word in used) if used else 60.0
+    # A faixa precisa ser contígua. Texto digital alinhado nessa faixa não é inventado.
     if from_text_layer:
         reliable = True
         confidence = max(confidence, 92.0)
     else:
         reliable = False
         confidence = min(confidence, 78.0)
-    used = [word for index in range(min(usable), max(usable) + 1) for word in lines[index]]
     x = min(word.bbox[0] for word in used)
     y = min(word.bbox[1] for word in used)
     right = max(word.bbox[0] + word.bbox[2] for word in used)
@@ -556,8 +674,9 @@ def blocks_from_pdf_chars(chars: list[dict], page_width: float, page_height: flo
             lines[-1]["items"].append(item)
             continue
         if lines and not lines[-1].get("break") and lines[-1]["items"]:
-            reference = next((entry for entry in lines[-1]["items"] if entry.get("height", 0) >= 0.8), lines[-1]["items"][-1])
-            tolerance = max(reference.get("height", 1), item["height"], 1) * 0.65
+            body = [entry for entry in lines[-1]["items"] if not entry.get("space") and entry.get("height", 0) >= 0.8]
+            reference = max(body, key=lambda entry: entry.get("height", 0)) if body else lines[-1]["items"][-1]
+            tolerance = max(reference.get("height", 1), item["height"], 1) * 0.7
             line_right = max(entry["x1"] for entry in lines[-1]["items"])
             column_gap = item["x0"] - line_right
             same_baseline = abs(item.get("baseline", item["top"]) - reference.get("baseline", reference["top"])) <= tolerance

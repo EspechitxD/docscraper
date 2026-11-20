@@ -15,17 +15,17 @@ O CPMH Document Intelligence é um aplicativo desktop local. O Electron abre a j
 3. Se a resposta for PDF, o arquivo é analisado direto. Imagem isolada vai para OCR. HTML entra na captura sequencial.
 4. Cada página guarda PNG, hash, hash perceptual, regiões normalizadas e metadados.
 5. A reconstrução lê as regiões na ordem de leitura, inclusive em duas colunas, e liga parágrafos que continuam na página seguinte.
-6. A exportação reutiliza o que já está no banco. Não dispara novo OCR.
+6. A exportação reconstrói os elementos a partir das regiões vivas e só então lê o banco. Não dispara novo OCR. Uma revisão anterior não pode ficar só na região.
 
 ## Banco
 
-SQLite em modo WAL, com chaves estrangeiras. As tabelas cobrem projetos, documentos, páginas, capturas, regiões, elementos, imagens, tabelas, fórmulas, traduções, glossários, tarefas, passos, logs, exportações e preferências. A versão do esquema está em `schema_migrations`. Na abertura, tarefa que ficou em estado intermediário volta para `paused`, com o checkpoint preservado.
+SQLite em modo WAL, com chaves estrangeiras. As tabelas cobrem projetos, documentos, páginas, capturas, regiões, revisões de região, elementos, imagens, tabelas, fórmulas, traduções, glossários, tarefas, passos, logs, exportações e preferências. A versão do esquema é 2. Bancos antigos ganham a coluna `evidence` sem perder linhas. Na abertura, tarefa que ficou em estado intermediário volta para `paused`, com o checkpoint preservado.
 
 ## Captura
 
 `decide_capture` combina contador, botão seguinte desabilitado, hash, página em branco ou parcial e o limite de páginas. Contador no fim ou botão desabilitado encerra a captura. Três páginas idênticas sem sinal de fim ficam inconclusivas. A interface não declara o documento completo nesse caso.
 
-O navegador visível do Electron não é a fonte das coordenadas. O overlay usa a imagem capturada e caixas de 0 a 1.
+A revisão sobre a imagem capturada continua com caixas de 0 a 1. O navegador visível injeta um SVG no documento: cada coordenada normalizada é multiplicada por `scrollWidth` ou `scrollHeight`. Zoom e rolagem do Chromium deslocam a página e as caixas juntas. O visualizador nativo de PDF não recebe essa camada.
 
 ## OCR e layout
 
@@ -33,7 +33,7 @@ A camada de texto do PDF recebe confiança 99 e origem `pdf_text`. Página com m
 
 ## Tradução
 
-O glossário local protege códigos, normas, unidades e termos marcados como intraduzíveis. Sem Argos e sem URL externa, o resultado é parcial. URL externa só é chamada se a tarefa trouxer consentimento e o endereço passar pela mesma validação de SSRF.
+Os modos canônicos são `none`, `selected_regions`, `document_pt_br` e `bilingual`. Nomes antigos da interface são convertidos na API. A seleção traduz só os IDs do próprio documento. O glossário usado é o do projeto; um glossário de outro projeto é ignorado. Sem Argos e sem URL externa, o resultado é parcial e o runtime informa `unavailable`. URL externa só é chamada se a tarefa trouxer consentimento e o endereço passar pela mesma validação de SSRF. Nenhum modelo é baixado automaticamente.
 
 ## Dados
 

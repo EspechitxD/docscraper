@@ -28,9 +28,11 @@ As bibliotecas Python pinadas estão em `requirements.txt`.
 - ícone `assets/icons/cpmh.ico`;
 - dados do usuário preservados na desinstalação.
 
-O comando previsto é `npm run dist:win`. Ele não foi executado. Esta máquina é Linux x64 e não há Windows 10 ou 11 disponível. Por isso o diagnóstico expõe `windows_installer_tested: false` e este documento não declara compatibilidade com Windows.
+O comando previsto é `npm run dist:win`. Ele prepara `build/runtime/manifest.json` e chama o electron-builder. Não foi executado. Esta máquina é Linux x64 e não há Windows 10 ou 11 disponível. O diagnóstico expõe `windows_installer_tested: false`.
 
-O pacote ainda não embute um interpretador Python congelado. No desenvolvimento o Electron usa o virtualenv do repositório. Num instalador de usuário final, o binário do backend precisaria ser produzido no próprio Windows e colocado em `resources/backend/cpmh-backend.exe`. Esse passo não foi feito.
+No desenvolvimento o Electron usa o virtualenv do repositório. Quando `app.isPackaged` é verdadeiro, ele só inicia `resources/backend/cpmh-backend.exe` (ou o binário sem extensão no Linux). Se o arquivo não existir, a janela informa que a instalação está incompleta e não chama o Python do sistema.
+
+O freezer está em `packaging/cpmh-backend.spec` e o workflow em `.github/workflows/desktop.yml`. Nenhum dos dois rodou nesta sessão. `scripts/stage_runtime.py` registra Tesseract, modelos e Chrome encontrados, com tamanho e SHA-256, e não baixa binários. O manifesto desta máquina marca o backend congelado como ausente.
 
 ## Diagnóstico e reparo
 

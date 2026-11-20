@@ -1,0 +1,36 @@
+{
+  "document": {
+    "title": "Avaliação externa de escolas e sua relação com políticas e práticas inclusivas: uma revisão sistemática da literatura.",
+    "source_url": "https://www.scielo.br/j/ensaio/a/nnh5ntMHZWGrC3qDVJ4LHrJ/?format=pdf&lang=pt",
+    "doi": "10.1590/S0104-40362025003305115",
+    "sha256": "c3d13372a45637a51311e07593148c3661e8a0dabbf07b325db1441053fee5fd",
+    "bytes": 676380,
+    "pages": 27,
+    "page_size_pt": [425.2, 637.79],
+    "retrieved_at": "2026-11-20T11:55:10Z"
+  },
+  "project": {
+    "name": "Benchmark SciELO — Avaliação de políticas inclusivas",
+    "id": "d81089d1-d3ad-4ee8-be23-c1e07755d766",
+    "document_id": "f51a8e87-7cc3-4f5c-aaf3-245a463b149b"
+  },
+  "first_job": {
+    "id": "6f2edf7e-1d12-4de8-9d99-890a5b24c99f",
+    "finished_at": "2026-11-20T11:56:19Z",
+    "pages_processed": 27,
+    "translate_mode": "none"
+  },
+  "corrected_job_finished_at": "2026-11-20T12:19:35Z",
+  "metrics": {
+    "tool": "pypdf PdfReader.extract_text versus export TXT, whitespace collapsed, tokens of letters and digits",
+    "fonttools_warning": true,
+    "first_body_token_recall": 0.8416,
+    "corrected_body_token_recall": 0.9853,
+    "corrected_body_tokens": 8973,
+    "corrected_body_missing": 132,
+    "corrected_body_extra": 20,
+    "first_mean_page_cer_regions": 0.2561,
+    "corrected_mean_page_cer_regions": 0.1511,
+    "note": "O CER por página compara o texto das regiões com o pypdf. Palavras que foram para tabela ou para a figura saem dessa conta e entram no TXT quando a célula é exportada. O recall do TXT é a medida de conteúdo."
+  }
+}

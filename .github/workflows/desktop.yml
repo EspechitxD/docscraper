@@ -1,0 +1,43 @@
+name: desktop
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dependências de sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-chi-sim tesseract-ocr-chi-tra fonts-dejavu-core fonts-wqy-microhei
+      - name: Python
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/bin/pip install -r requirements.txt
+      - name: Testes
+        run: PYTHONPATH=backend backend/.venv/bin/pytest tests -q
+
+  windows-backend:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Congelar o backend
+        shell: pwsh
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/Scripts/python -m pip install -r requirements.txt pyinstaller
+          backend/.venv/Scripts/pyinstaller packaging/cpmh-backend.spec --noconfirm --distpath dist --workpath build/pyinstaller
+          if (!(Test-Path dist/cpmh-backend/cpmh-backend.exe)) { throw "O freezer não produziu cpmh-backend.exe" }
+          Get-Item dist/cpmh-backend/cpmh-backend.exe | Select-Object FullName, Length
+      # A suíte completa continua no Linux. No Windows ela ainda depende de
+      # Tesseract, tessdata e das fontes usadas pelos PDFs de teste. Não há
+      # download silencioso desses componentes neste workflow.

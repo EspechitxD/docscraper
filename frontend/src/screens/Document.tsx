@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { CATEGORIES, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
+import { CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
 
 type Tab = "process" | "review" | "structure" | "export" | "browser";
@@ -16,6 +16,23 @@ export function DocumentScreen() {
   const [translateMode, setTranslateMode] = useState("none");
   const [consent, setConsent] = useState(false);
   const [disclosure, setDisclosure] = useState("");
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [runtime, setRuntime] = useState("");
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem(`cpmh-selection-${documentId}`);
+    setChosen(stored ? JSON.parse(stored) as string[] : []);
+  }, [documentId]);
+
+  useEffect(() => {
+    sessionStorage.setItem(`cpmh-selection-${documentId}`, JSON.stringify(chosen));
+  }, [chosen, documentId]);
+
+  useEffect(() => {
+    api<{ message: string; state: string }>("/translation/runtime")
+      .then((payload) => setRuntime(payload.message))
+      .catch(() => undefined);
+  }, []);
 
   async function load() {
     const [current, allJobs] = await Promise.all([api<DocumentItem>(`/documents/${documentId}`), api<Job[]>("/jobs")]);
@@ -39,11 +56,17 @@ export function DocumentScreen() {
 
   async function startJob(force = false) {
     setError("");
+    if (translateMode === "selected_regions" && chosen.length === 0) {
+      setError("Selecione ao menos uma região na revisão antes de traduzir a seleção.");
+      setTab("review");
+      return;
+    }
     try {
       await api(`/documents/${documentId}/jobs`, {
         method: "POST",
         body: JSON.stringify({
           translate_mode: translateMode,
+          selected_region_ids: translateMode === "selected_regions" ? chosen : [],
           external_translation: translateMode !== "none" && consent,
           external_consent: consent,
           force_recapture: force,
@@ -105,12 +128,11 @@ export function DocumentScreen() {
           </div>
           <Field label="Tradução nesta tarefa">
             <select className="select" value={translateMode} onChange={(event) => setTranslateMode(event.target.value)}>
-              <option value="none">Sem tradução</option>
-              <option value="full">Documento completo</option>
-              <option value="side_by_side">Original e tradução</option>
-              <option value="portuguese">Somente português</option>
+              {TRANSLATION_MODES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </Field>
+          {runtime && <Notice>{runtime} Tradução só de glossário permanece parcial e não é tratada como tradução neural.</Notice>}
+          {translateMode === "selected_regions" && <p>{chosen.length} região(ões) selecionada(s) nesta sessão.</p>}
           {translateMode !== "none" && (
             <div className="stack">
               <Button kind="secondary" onClick={() => void showDisclosure()}>Ver o que seria enviado a um serviço externo</Button>
@@ -157,15 +179,15 @@ export function DocumentScreen() {
           )}
         </section>
       )}
-      {tab === "review" && <ReviewPane documentId={documentId} />}
+      {tab === "review" && <ReviewPane documentId={documentId} chosen={chosen} onChosen={setChosen} />}
       {tab === "structure" && <StructurePane documentId={documentId} />}
       {tab === "export" && doc && <ExportPane document={doc} onDone={load} />}
-      {tab === "browser" && <BrowserPane initialUrl={doc?.url || ""} />}
+      {tab === "browser" && <BrowserPane documentId={documentId} initialUrl={doc?.url || ""} chosen={chosen} />}
     </section>
   );
 }
 
-function ReviewPane({ documentId }: { documentId: string }) {
+function ReviewPane({ documentId, chosen, onChosen }: { documentId: string; chosen: string[]; onChosen: (ids: string[]) => void }) {
   const [pages, setPages] = useState<PageItem[]>([]);
   const [pageId, setPageId] = useState("");
   const [regions, setRegions] = useState<Region[]>([]);
@@ -173,6 +195,7 @@ function ReviewPane({ documentId }: { documentId: string }) {
   const [imageUrl, setImageUrl] = useState("");
   const [draft, setDraft] = useState<Region | null>(null);
   const [mode, setMode] = useState<"select" | "draw">("select");
+  const [hidden, setHidden] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [thresholds, setThresholds] = useState({ high: 85, medium: 60 });
   const drawing = useRef<{ x: number; y: number } | null>(null);
@@ -333,6 +356,19 @@ function ReviewPane({ documentId }: { documentId: string }) {
         <Button kind={mode === "draw" ? "primary" : "secondary"} onClick={() => setMode(mode === "draw" ? "select" : "draw")}>
           {mode === "draw" ? "Desenhar região" : "Adicionar região"}
         </Button>
+        <span>{chosen.length} na seleção de tradução</span>
+      </div>
+      <div className="row">
+        {CATEGORIES.slice(0, 8).map((item) => (
+          <label key={item.id} className="check">
+            <input
+              type="checkbox"
+              checked={!hidden.includes(item.id)}
+              onChange={(event) => setHidden((current) => event.target.checked ? current.filter((id) => id !== item.id) : [...current, item.id])}
+            />
+            {item.label}
+          </label>
+        ))}
       </div>
       {!pages.length && <div className="empty">Este documento ainda não tem páginas capturadas.</div>}
       <div className="legend">
@@ -344,7 +380,7 @@ function ReviewPane({ documentId }: { documentId: string }) {
         <div className="stage" ref={stageRef} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
           {imageUrl && <img src={imageUrl} alt={`Página ${pages.find((page) => page.id === pageId)?.sequence || ""}`} />}
           <svg className="overlay" viewBox="0 0 1 1" preserveAspectRatio="none">
-            {regions.map((region) => (
+            {regions.filter((region) => !hidden.includes(region.category)).map((region) => (
               <g key={region.id}>
                 <rect
                   className={`region cat-${region.category} ${region.id === selected ? "selected" : ""}`}
@@ -406,6 +442,17 @@ function ReviewPane({ documentId }: { documentId: string }) {
               <tbody>
                 {regions.map((region) => (
                   <tr key={region.id} className="clickable" onClick={() => setSelected(region.id)}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={chosen.includes(region.id)}
+                        onChange={(event) => {
+                          event.stopPropagation();
+                          onChosen(event.target.checked ? [...chosen, region.id] : chosen.filter((id) => id !== region.id));
+                        }}
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    </td>
                     <td>{categoryLabel(region.category)}</td>
                     <td>{region.confidence.toFixed(0)}</td>
                     <td>{region.text.slice(0, 48)}</td>
@@ -492,16 +539,144 @@ function StructurePane({ documentId }: { documentId: string }) {
         {!tables.length && <div className="empty">Nenhuma tabela identificada.</div>}
       </section>
       <section className="panel">
-        <h2>Fórmulas e imagens</h2>
+        <h2>Fórmulas</h2>
         {formulas.map((item) => (
           <p key={item.id}>{item.reliable ? item.text : `Preservada para revisão: ${item.notes || item.text}`}</p>
         ))}
-        {images.map((item) => (
-          <p key={item.id}>{item.name} · {categoryLabel(item.category)} · {item.width}×{item.height} · confiança {item.confidence.toFixed(0)}{item.caption ? ` · ${item.caption}` : ""}</p>
-        ))}
-        {!formulas.length && !images.length && <div className="empty">Nenhuma fórmula ou imagem extraída.</div>}
+        {!formulas.length && <div className="empty">Nenhuma fórmula extraída.</div>}
       </section>
+      <ImageReview documentId={documentId} images={images} onChange={setImages} />
     </div>
+  );
+}
+
+function ImageReview({ documentId, images, onChange }: { documentId: string; images: ImageItem[]; onChange: (rows: ImageItem[]) => void }) {
+  const [currentId, setCurrentId] = useState(images[0]?.id || "");
+  const [preview, setPreview] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [fit, setFit] = useState(true);
+  const [draft, setDraft] = useState<ImageItem | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [directory, setDirectory] = useState("");
+  const [error, setError] = useState("");
+  const [confirmId, setConfirmId] = useState("");
+  const current = images.find((item) => item.id === currentId) || images[0] || null;
+
+  useEffect(() => {
+    if (!current) {
+      setPreview("");
+      setDraft(null);
+      return;
+    }
+    setDraft(current);
+    let url = "";
+    apiBlob(`/images/${current.id}/file`).then((blob) => {
+      url = URL.createObjectURL(blob);
+      setPreview(url);
+    }).catch(() => setPreview(""));
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [current?.id]);
+
+  async function save() {
+    if (!draft) return;
+    const updated = await api<ImageItem>(`/images/${draft.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name: draft.name, category: draft.category, caption: draft.caption, review_state: "reviewed" }),
+    });
+    onChange(images.map((item) => item.id === draft.id ? { ...item, ...updated } : item));
+  }
+
+  async function remove(id: string) {
+    const result = await api<{ file_removed: boolean }>(`/images/${id}?confirm=true`, { method: "DELETE" });
+    onChange(images.filter((item) => item.id !== id));
+    setConfirmId("");
+    setError(result.file_removed ? "Imagem e arquivo removidos." : "Imagem removida do documento. O arquivo permanece porque outro elemento ainda o usa.");
+  }
+
+  async function exportImages(ids: string[]) {
+    if (!directory) {
+      setError("Informe a pasta de destino.");
+      return;
+    }
+    const result = await api<{ files: { name: string }[] }>(`/documents/${documentId}/images/export`, {
+      method: "POST",
+      body: JSON.stringify({ ids, output_dir: directory, collision: "version" }),
+    });
+    setError(`${result.files.length} imagem(ns) copiada(s).`);
+  }
+
+  if (!current || !draft) {
+    return <section className="panel"><h2>Imagens</h2><div className="empty">Nenhuma imagem extraída.</div></section>;
+  }
+
+  return (
+    <section className="panel stack">
+      <h2>Imagens</h2>
+      {error && <Notice>{error}</Notice>}
+      <div className="image-review">
+        <div>
+          {preview && <img className="image-preview" src={preview} alt={draft.name} style={fit ? { maxWidth: "100%" } : { width: `${Math.round(zoom * 100)}%`, maxWidth: "none" }} />}
+          <div className="row">
+            <Button kind="secondary" onClick={() => { setFit(false); setZoom((value) => Math.min(3, value + 0.25)); }}>Ampliar</Button>
+            <Button kind="secondary" onClick={() => { setFit(false); setZoom((value) => Math.max(0.5, value - 0.25)); }}>Reduzir</Button>
+            <Button kind="secondary" onClick={() => { setFit(true); setZoom(1); }}>Ajustar</Button>
+          </div>
+        </div>
+        <div className="stack">
+          <div className="kv">
+            <span>Página</span><strong>{draft.page_sequence ?? "—"}</strong>
+            <span>Caixa</span><strong className="mono">{(draft.bbox || []).map((value) => value.toFixed(3)).join(", ") || "—"}</strong>
+            <span>Dimensões</span><strong>{draft.width}×{draft.height}</strong>
+            <span>Formato</span><strong>{draft.format || "png"}</strong>
+            <span>Confiança</span><strong>{draft.confidence.toFixed(0)}</strong>
+            <span>Revisão</span><strong>{draft.review_state || "pending"}</strong>
+          </div>
+          <Field label="Nome"><input className="field" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></Field>
+          <Field label="Categoria">
+            <select className="select" value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })}>
+              {CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Legenda"><textarea className="area" value={draft.caption} onChange={(event) => setDraft({ ...draft, caption: event.target.value })} /></Field>
+          <div className="row">
+            <Button onClick={() => void save()}>Salvar revisão</Button>
+            <Button kind="danger" onClick={() => setConfirmId(draft.id)}>Excluir</Button>
+            <Button kind="secondary" onClick={() => void exportImages([draft.id])}>Exportar esta</Button>
+          </div>
+        </div>
+      </div>
+      <div className="row">
+        <input className="field grow" value={directory} placeholder="Pasta para exportar imagens" onChange={(event) => setDirectory(event.target.value)} />
+        <Button kind="secondary" onClick={() => void exportImages(picked.length ? picked : images.map((item) => item.id))}>Exportar seleção ou lote</Button>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {images.map((item) => (
+              <tr key={item.id} className="clickable" onClick={() => setCurrentId(item.id)}>
+                <td>
+                  <input type="checkbox" checked={picked.includes(item.id)} onChange={(event) => setPicked(event.target.checked ? [...picked, item.id] : picked.filter((id) => id !== item.id))} onClick={(event) => event.stopPropagation()} />
+                </td>
+                <td>{item.name}</td>
+                <td>{categoryLabel(item.category)}</td>
+                <td>{item.review_state || "pending"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {confirmId && (
+        <Modal title="Excluir imagem" onClose={() => setConfirmId("")}>
+          <p>A imagem sai do documento. O arquivo só é apagado se nenhum outro elemento o utilizar.</p>
+          <div className="row">
+            <Button kind="danger" onClick={() => void remove(confirmId)}>Excluir</Button>
+            <Button kind="ghost" onClick={() => setConfirmId("")}>Cancelar</Button>
+          </div>
+        </Modal>
+      )}
+    </section>
   );
 }
 
@@ -585,10 +760,8 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
           </select>
         </Field>
         <Field label="Tradução já armazenada">
-          <select className="select" value={translateMode} onChange={(event) => setTranslateMode(event.target.value)}>
-            <option value="none">Sem tradução</option>
-            <option value="side_by_side">Lado a lado</option>
-            <option value="portuguese">Somente português</option>
+          <select className="select" value={canonicalTranslationMode(translateMode)} onChange={(event) => setTranslateMode(event.target.value)}>
+            {TRANSLATION_MODES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
         </Field>
       </div>
@@ -630,12 +803,14 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
   );
 }
 
-function BrowserPane({ initialUrl }: { initialUrl: string }) {
+function BrowserPane({ documentId, initialUrl, chosen }: { documentId: string; initialUrl: string; chosen: string[] }) {
   const slot = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState(initialUrl);
   const [zoom, setZoom] = useState(1);
   const [message, setMessage] = useState("");
   const [checked, setChecked] = useState("");
+  const [overlayOn, setOverlayOn] = useState(true);
+  const [overlayNote, setOverlayNote] = useState("");
 
   useEffect(() => setUrl(initialUrl), [initialUrl]);
 
@@ -674,6 +849,21 @@ function BrowserPane({ initialUrl }: { initialUrl: string }) {
     }
   }
 
+  async function publishOverlay(visible: boolean) {
+    if (!window.cpmh) {
+      setOverlayNote("A sobreposição ao vivo só existe na janela do aplicativo. A revisão pela imagem capturada continua disponível.");
+      return;
+    }
+    const pages = await api<PageItem[]>(`/documents/${documentId}/pages`);
+    const groups = await Promise.all(pages.map((page) => api<Region[]>(`/pages/${page.id}/regions`)));
+    await window.cpmh.browserOverlay({
+      visible,
+      selectedId: chosen[0],
+      regions: groups.flat().map((region) => ({ id: region.id, category: region.category, bbox: region.bbox })),
+    });
+    setOverlayNote(visible ? "Caixas posicionadas no documento, em coordenadas normalizadas. Zoom e rolagem movem a página e as caixas juntas." : "Sobreposição oculta.");
+  }
+
   return (
     <section className="panel stack">
       <p>A vista mostra o endereço autorizado. A captura sequencial, o fim do documento e o registro das páginas acontecem no processamento, com Playwright. Esta vista não desativa proteção de conteúdo.</p>
@@ -683,6 +873,11 @@ function BrowserPane({ initialUrl }: { initialUrl: string }) {
         <Button kind="secondary" onClick={() => void window.cpmh?.browserReload()} disabled={!window.cpmh}>Atualizar</Button>
         <input className="field grow mono" value={url} onChange={(event) => setUrl(event.target.value)} />
         <Button onClick={() => void validate()}>Abrir</Button>
+        <Button kind="secondary" onClick={() => void publishOverlay(overlayOn)}>Sobrepor regiões</Button>
+        <label className="check">
+          <input type="checkbox" checked={overlayOn} onChange={(event) => { setOverlayOn(event.target.checked); void publishOverlay(event.target.checked); }} />
+          Visível
+        </label>
       </div>
       <div className="row">
         <Field label="Zoom">
@@ -696,6 +891,7 @@ function BrowserPane({ initialUrl }: { initialUrl: string }) {
         {checked && <span className="badge ok">{checked}</span>}
       </div>
       {message && <Notice>{message}</Notice>}
+      {overlayNote && <Notice>{overlayNote}</Notice>}
       {!window.cpmh && <Notice kind="warn">O Chromium embutido aparece na janela do aplicativo. Nesta página do navegador, a validação do endereço continua ativa, mas a vista não é desenhada por cima.</Notice>}
       <div className="browser-slot" ref={slot} />
     </section>
