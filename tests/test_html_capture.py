@@ -108,6 +108,55 @@ THEN_TRAP = """<!doctype html><html><head><title>ASTM</title>
 </head><body><h1>ASTM F 3127</h1><p>Texto visivel do documento.</p></body></html>"""
 
 
+CANVAS_VIEWER = """<!doctype html><html><head><title>Visor</title></head><body>
+<canvas id="sheet" width="800" height="900"></canvas>
+<a id="nextPageButton" title="下一页" href="#">seguinte</a>
+<script>
+const canvas = document.getElementById('sheet');
+const ctx = canvas.getContext('2d');
+function draw(step) {
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, 800, 900);
+  ctx.fillStyle = step === 1 ? '#222' : '#0a4';
+  ctx.fillRect(30, 30, 740, 500);
+  ctx.fillStyle = '#fff';
+  ctx.font = '64px sans-serif';
+  ctx.fillText('FOLHA ' + step, 80, 280);
+}
+draw(1);
+document.getElementById('nextPageButton').addEventListener('click', (event) => {
+  event.preventDefault();
+  draw(2);
+});
+</script>
+<p>Texto ao redor que não é a folha.</p>
+</body></html>"""
+
+
+def test_painted_canvas_is_captured_page_by_page(tmp_path):
+    from cpmh_backend.services.capture import capture_html
+
+    server = _serve(CANVAS_VIEWER)
+    port = server.server_address[1]
+    try:
+        captured = capture_html(
+            f"http://127.0.0.1:{port}/visor",
+            tmp_path / "pages",
+            allow_local=True,
+            max_pages=2,
+            timeout=10,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert len(captured["pages"]) == 2, captured.get("status")
+    hashes = [page["sha256"] for page in captured["pages"]]
+    assert len(set(hashes)) == 2
+    for page in captured["pages"]:
+        assert page["blank"] is False
+        assert page["blocks"] == []
+
+
 def test_thenable_page_object_is_read_instead_of_attribute_error(tmp_path):
     from cpmh_backend.services.capture import capture_html
 

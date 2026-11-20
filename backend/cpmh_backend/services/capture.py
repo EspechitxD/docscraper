@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import logging
 import shutil
@@ -43,8 +45,8 @@ _EXTRACT = """
   const nodes = Array.from(document.querySelectorAll("button, a, [role='button']"));
   let next = null;
   for (const el of nodes) {
-    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
-    if (/(próxima página|proxima pagina|next page|^next$|rel)/.test(label) || el.getAttribute("rel") === "next") {
+    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("title") || "") + " " + (el.id || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
+    if (el.id === "nextPageButton" || el.getAttribute("rel") === "next" || /(próxima página|proxima pagina|next page|下一页|^next$)/.test(label)) {
       next = el;
       break;
     }
@@ -65,9 +67,9 @@ _CLICK = """
 () => {
   const nodes = Array.from(document.querySelectorAll("button, a, [role='button']"));
   for (const el of nodes) {
-    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
+    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("title") || "") + " " + (el.id || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
     const rel = el.getAttribute("rel");
-    if (rel === "next" || /(próxima página|proxima pagina|next page)/.test(label)) {
+    if (el.id === "nextPageButton" || rel === "next" || /(próxima página|proxima pagina|next page|下一页)/.test(label)) {
       if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
       el.click();
       return true;
@@ -180,6 +182,66 @@ def capture_html(
         }
 
 
+def _visible_canvas(page):
+    """A folha desenhada num canvas, a que está mais dentro da janela."""
+    raw = page.evaluate(
+        """() => {
+      const viewHeight = window.innerHeight || 800;
+      const nodes = Array.from(document.querySelectorAll('canvas'));
+      let best = null;
+      nodes.forEach((canvas, index) => {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width < 400 || rect.height < 480) return;
+        const visible = Math.min(rect.bottom, viewHeight) - Math.max(rect.top, 0);
+        const score = visible > 0 ? visible : rect.width;
+        if (!best || score > best.score) best = {index, score};
+      });
+      return best ? JSON.stringify(best) : '';
+    }"""
+    )
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        chosen = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return page.locator("canvas").nth(int(chosen["index"]))
+
+
+def _canvas_image(locator):
+    try:
+        payload = locator.screenshot(type="png", timeout=5000)
+    except Exception:
+        return None
+    return Image.open(io.BytesIO(payload))
+
+
+def _canvas_digest(locator) -> str:
+    try:
+        payload = locator.screenshot(type="png", timeout=5000)
+    except Exception:
+        return ""
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _wait_for_painted_canvas(page, timeout: float) -> bool:
+    """Espera o visor desenhar a folha. Sem canvas grande, segue na hora."""
+    if _visible_canvas(page) is None:
+        return False
+    deadline = time.perf_counter() + min(max(timeout, 1.0), 20.0)
+    while True:
+        locator = _visible_canvas(page)
+        image = _canvas_image(locator) if locator is not None else None
+        if image is not None and not looks_blank(image):
+            image.close()
+            return True
+        if image is not None:
+            image.close()
+        if time.perf_counter() >= deadline:
+            return False
+        page.wait_for_timeout(400)
+
+
 def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, observations, pages) -> dict:
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
@@ -230,11 +292,20 @@ def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, obse
             )
             if verdict["state"] != "ACCESS_GRANTED":
                 return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
+            canvas_pages = _wait_for_painted_canvas(page, timeout)
+            if canvas_pages:
+                logger.info("visor desenhou a folha; a captura usa o canvas")
+            seen_pages: set[str] = set()
             for index in range(max_pages):
                 png = out_dir / f"capture-{index + 1:04d}.png"
-                page.screenshot(path=str(png), full_page=True)
+                surface = _visible_canvas(page) if canvas_pages else None
+                if surface is not None:
+                    surface.screenshot(path=str(png), timeout=8000)
+                    dom = None
+                else:
+                    page.screenshot(path=str(png), full_page=True)
+                    dom = evaluate_page(page, _DOM)
                 info = evaluate_page(page, _EXTRACT) or {}
-                dom = evaluate_page(page, _DOM)
                 image = Image.open(png)
                 digest = sha256_file(png)
                 perceptual = dhash(image)
@@ -251,6 +322,7 @@ def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, obse
                     partial=looks_partial(image),
                 )
                 observations.append(observation)
+                seen_pages.add(digest)
                 decision = decide_capture(observations, hit_max=index + 1 >= max_pages)
                 pages.append(
                     {
@@ -279,7 +351,21 @@ def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, obse
                         else:
                             capture_status = "inconclusive" if info.get("nextPresent") else "complete"
                         break
+                    previous = digest
                     page.wait_for_timeout(400)
+                    if canvas_pages:
+                        changed_to = ""
+                        deadline = time.perf_counter() + min(8.0, max(timeout, 1.0))
+                        while time.perf_counter() < deadline:
+                            locator = _visible_canvas(page)
+                            current = _canvas_digest(locator) if locator is not None else ""
+                            if current and current != previous:
+                                changed_to = current
+                                break
+                            page.wait_for_timeout(400)
+                        if not changed_to or changed_to in seen_pages:
+                            capture_status = "complete"
+                            break
                     continue
                 capture_status = "complete" if decision == "complete" else "inconclusive"
                 break
