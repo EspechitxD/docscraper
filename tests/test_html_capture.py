@@ -103,6 +103,33 @@ def _serve(body: str):
     return server
 
 
+THEN_TRAP = """<!doctype html><html><head><title>ASTM</title>
+<script>Object.prototype.then = function (resolve) { resolve(undefined); };</script>
+</head><body><h1>ASTM F 3127</h1><p>Texto visivel do documento.</p></body></html>"""
+
+
+def test_thenable_page_object_is_read_instead_of_attribute_error(tmp_path):
+    from cpmh_backend.services.capture import capture_html
+
+    server = _serve(THEN_TRAP)
+    port = server.server_address[1]
+    try:
+        captured = capture_html(
+            f"http://127.0.0.1:{port}/manual",
+            tmp_path / "pages",
+            allow_local=True,
+            max_pages=1,
+            timeout=15,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert captured["status"] != "blocked", captured.get("access") or captured.get("error")
+    text = " ".join(block.text for page in captured["pages"] for block in page["blocks"])
+    assert "Texto visivel do documento" in text
+    assert "AttributeError" not in str(captured.get("error") or "")
+
+
 def test_downloaded_html_keeps_visible_text_and_skips_script(tmp_path):
     result = pages_from_downloaded_html(ARTICLE, "http://exemplo.test/manual", tmp_path)
     assert result["status"] == "complete"

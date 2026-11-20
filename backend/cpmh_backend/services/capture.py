@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from html.parser import HTMLParser
@@ -24,14 +25,14 @@ _SIGNALS = """
     "#challenge-form", ".cf-browser-verification", "#cf-challenge-running",
     "input[type='password']", "#captcha", ".captcha"
   ];
-  return {
+  return JSON.stringify({
     title: document.title || "",
     text: document.body ? document.body.innerText.slice(0, 1500) : "",
     ready: document.readyState,
     iframes: Array.from(document.querySelectorAll("iframe")).map(src).filter(Boolean).slice(0, 20),
     scripts: Array.from(document.querySelectorAll("script")).map(src).filter(Boolean).slice(0, 30),
     markers: selectors.filter((selector) => document.querySelector(selector))
-  };
+  });
 }
 """
 
@@ -48,7 +49,7 @@ _EXTRACT = """
       break;
     }
   }
-  return {
+  return JSON.stringify({
     title: document.title || "",
     counter: counter ? [Number(counter[1]), Number(counter[2])] : null,
     nextPresent: Boolean(next),
@@ -56,7 +57,7 @@ _EXTRACT = """
     ready: document.readyState,
     scrollWidth: document.documentElement.scrollWidth,
     scrollHeight: document.documentElement.scrollHeight
-  };
+  });
 }
 """
 
@@ -80,7 +81,7 @@ _DOM = """
 () => {
   const root = document.documentElement;
   const pick = Array.from(document.querySelectorAll("h1,h2,h3,p,li,td,th,caption,figcaption,header,footer"));
-  return {
+  return JSON.stringify({
     width: root.scrollWidth,
     height: root.scrollHeight,
     nodes: pick.slice(0, 400).map((el) => {
@@ -94,7 +95,7 @@ _DOM = """
         h: rect.height
       };
     })
-  };
+  });
 }
 """
 
@@ -113,6 +114,22 @@ def _allow_route(route, allow_local: bool) -> None:
 
 def browser_snapshot(value) -> dict | None:
     """O navegador às vezes devolve nulo em vez do objeto da página."""
+    return value if isinstance(value, dict) else None
+
+
+def evaluate_page(page, script: str) -> dict | None:
+    """Lê um objeto calculado na página.
+
+    Há páginas que definem `then` em Object.prototype. O Playwright trata
+    qualquer objeto devolvido como Promise e recebe undefined. Uma string
+    JSON não entra nesse caminho, então o objeto nasce aqui no Python.
+    """
+    value = page.evaluate(script)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
     return value if isinstance(value, dict) else None
 
 
@@ -192,7 +209,7 @@ def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, obse
             except PlaywrightTimeout:
                 pass
             page.wait_for_timeout(250)
-            observed = browser_snapshot(page.evaluate(_SIGNALS))
+            observed = evaluate_page(page, _SIGNALS)
             if observed is None:
                 verdict = classify({"url": url, "final_url": page.url, "navigation_error": "browser"})
                 return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
@@ -216,8 +233,8 @@ def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, obse
             for index in range(max_pages):
                 png = out_dir / f"capture-{index + 1:04d}.png"
                 page.screenshot(path=str(png), full_page=True)
-                info = browser_snapshot(page.evaluate(_EXTRACT)) or {}
-                dom = browser_snapshot(page.evaluate(_DOM))
+                info = evaluate_page(page, _EXTRACT) or {}
+                dom = evaluate_page(page, _DOM)
                 image = Image.open(png)
                 digest = sha256_file(png)
                 perceptual = dhash(image)
@@ -305,7 +322,7 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             except PlaywrightTimeout:
                 pass
             page.wait_for_timeout(200)
-            observed = browser_snapshot(page.evaluate(_SIGNALS))
+            observed = evaluate_page(page, _SIGNALS)
             if observed is None:
                 return classify({"url": validated.url, "final_url": page.url, "navigation_error": "browser"})
             return classify(
