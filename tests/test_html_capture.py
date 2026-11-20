@@ -223,6 +223,54 @@ def test_unreadable_declared_pdf_falls_back_to_page_text(client, monkeypatch):
         server.server_close()
 
 
+def test_download_failure_keeps_the_traceback_and_the_stage(client, monkeypatch):
+    def boom(*_args, **_kwargs):
+        none = None
+        return none.get("url")
+
+    monkeypatch.setattr("cpmh_backend.services.pipeline.managed_fetch", boom)
+    client.put("/api/preferences", json={"values": {"allow_local_network": True}})
+    project = client.post("/api/projects", json={"name": "Rastreio"}).json()
+    added = client.post(f"/api/projects/{project['id']}/documents", json={"url": "http://127.0.0.1/manual"})
+    document_id = added.json()["document"]["id"]
+    job = client.post(f"/api/documents/{document_id}/jobs", json={"translate_mode": "none", "export_formats": []})
+    run_job(job.json()["id"])
+    finished = client.get(f"/api/jobs/{job.json()['id']}").json()
+    document = client.get(f"/api/documents/{document_id}").json()
+    assert finished["state"] == "failed"
+    assert document["state"] == "failed"
+    assert "Traceback (most recent call last)" in finished["error"]
+    assert "AttributeError" in finished["error"]
+    assert "test_html_capture.py" in finished["error"]
+    names = [(step["name"], step["state"]) for step in finished["steps"]]
+    assert names[0][0] == "validating"
+    assert ("download", "running") in names
+    assert ("download", "failed") in names
+    assert names[-1] == ("error", "failed")
+    assert finished["steps"][-1]["message"].startswith("Etapa download: AttributeError")
+    assert "pipeline.py" in finished["error"]
+
+
+def test_missing_document_is_reported_without_attribute_error(client):
+    client.put("/api/preferences", json={"values": {"allow_local_network": True}})
+    project = client.post("/api/projects", json={"name": "Sumido"}).json()
+    added = client.post(f"/api/projects/{project['id']}/documents", json={"url": "https://example.com/sumido"})
+    document_id = added.json()["document"]["id"]
+    job = client.post(f"/api/documents/{document_id}/jobs", json={"translate_mode": "none", "export_formats": []}).json()
+    connection = sqlite3.connect(get_settings().database_path)
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+    connection.commit()
+    connection.close()
+    run_job(job["id"])
+    connection = sqlite3.connect(get_settings().database_path)
+    row = connection.execute("SELECT state, error FROM processing_jobs WHERE id = ?", (job["id"],)).fetchone()
+    connection.close()
+    assert row[0] == "failed"
+    assert row[1] == "Documento não encontrado."
+    assert "AttributeError" not in (row[1] or "")
+
+
 def test_download_does_not_lock_the_database(client, monkeypatch):
     probe = {"ok": False, "error": ""}
 

@@ -92,15 +92,20 @@ def run_job(job_id: str) -> None:
             _step(session, job, "error", "failed", job.error)
             logger.warning("job %s falhou: %s", job_id, job.error)
         except Exception as exc:
+            short, full = _failure_report(exc)
+            stage = job.stage if job.stage in {"download", "browser", "pdf"} else ""
+            if stage:
+                short = f"Etapa {stage}: {short}"[:500]
+                full = f"Etapa {stage}\n{full}"[:4000]
             job.state = "failed"
-            job.error = _failure_text(exc)
+            job.error = full
             job.finished_at = utcnow()
             job.started_at = job.started_at or job.finished_at
             job.attempts = job.attempts or 1
             document.state = "failed"
-            document.error_message = job.error
-            _step(session, job, "error", "failed", job.error)
-            logger.exception("job %s falhou", job_id)
+            document.error_message = full
+            _step(session, job, "error", "failed", short)
+            logger.error("job %s falhou\n%s", job_id, full)
 
 
 def process_available() -> bool:
@@ -250,7 +255,10 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     if not document.url:
         raise AppError("O documento não possui arquivo local nem URL.")
     _step(session, job, "validating", "done", "URL validada para download autorizado.")
+    _step(session, job, "download", "running", "Baixando o endereço.")
+    job.stage = "download"
     _release_db(session)
+    logger.info("job %s etapa download início %s", job.id, document.url)
     trace: list[dict] = []
 
     def stopped() -> bool:
@@ -269,6 +277,10 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
         )
     except AccessPaused:
         _store_trace(job, trace)
+        raise
+    except Exception:
+        _store_trace(job, trace)
+        _step(session, job, "download", "failed", "O download falhou.")
         raise
     if result.kind == "html":
         text = result.data.decode("utf-8", errors="replace")
@@ -293,10 +305,16 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
                     _store_trace(job, trace)
                     raise
                 _step(session, job, "validating", "done", "O PDF indicado pela página não foi baixado. A extração continua na página HTML.")
+            except Exception:
+                _store_trace(job, trace)
+                _step(session, job, "download", "failed", "O download do PDF indicado pela página falhou.")
+                raise
             else:
                 if pdf_result.kind == "pdf":
                     result = pdf_result
     _store_trace(job, trace)
+    logger.info("job %s etapa download fim kind=%s", job.id, result.kind)
+    _step(session, job, "download", "done", f"Download concluído ({result.kind}).")
     if result.kind == "pdf":
         destination = folder / "original" / "source.pdf"
         destination.write_bytes(result.data)
@@ -319,12 +337,17 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     raise AppError("O endereço não devolveu um PDF, uma imagem ou uma página HTML utilizável.")
 
 
-def _failure_text(exc: BaseException) -> str:
+def _failure_report(exc: BaseException) -> tuple[str, str]:
+    """Resumo de uma linha para a etapa e o traceback completo para o documento."""
+    formatted = traceback.format_exc().strip()
     frames = traceback.extract_tb(exc.__traceback__)
     own = [frame for frame in frames if "cpmh_backend" in frame.filename.replace("\\", "/")]
     frame = (own or frames)[-1] if frames else None
-    where = f" ({Path(frame.filename).name}:{frame.lineno})" if frame else ""
-    return f"{type(exc).__name__}: {exc}{where}"[:500]
+    where = f"{Path(frame.filename).name}:{frame.lineno} em {frame.name}" if frame else "sem rastreio"
+    short = f"{type(exc).__name__}: {exc} ({where})"
+    if len(formatted) > 3400:
+        formatted = formatted[:1500] + "\n...\n" + formatted[-1700:]
+    return short[:500], f"{short}\n{formatted}"[:4000]
 
 
 def _browser_gave_up(captured: dict) -> bool:
@@ -356,7 +379,11 @@ def _pause_capture(session, job, document, captured: dict) -> None:
 def _capture_page(session, job, document, folder: Path, languages, allow_local, max_pages, timeout) -> None:
     from cpmh_backend.services.capture import capture_html
 
+    _step(session, job, "browser", "running", "Lendo a página no navegador.")
+    job.stage = "browser"
+    logger.info("job %s etapa browser início", job.id)
     _release_db(session)
+    browser_error: BaseException | None = None
     try:
         captured = capture_html(
             document.normalized_url or document.url,
@@ -366,8 +393,13 @@ def _capture_page(session, job, document, folder: Path, languages, allow_local, 
             timeout=timeout,
         )
     except Exception as exc:
-        logger.exception("captura html")
-        captured = {"status": "browser_failed", "pages": [], "error": _failure_text(exc)}
+        browser_error = exc
+        short, full = _failure_report(exc)
+        logger.error("job %s etapa browser falhou\n%s", job.id, full)
+        _step(session, job, "browser", "failed", short)
+        captured = {"status": "browser_failed", "pages": [], "error": full}
+    else:
+        logger.info("job %s etapa browser fim status=%s", job.id, captured.get("status") if isinstance(captured, dict) else type(captured).__name__)
     if not isinstance(captured, dict):
         captured = {"status": "browser_failed", "pages": []}
     if _browser_gave_up(captured):
@@ -381,6 +413,8 @@ def _capture_page(session, job, document, folder: Path, languages, allow_local, 
         return
     pages = [page for page in (captured.get("pages") or []) if isinstance(page, dict)]
     if not pages:
+        if browser_error is not None:
+            raise browser_error
         raise AppError("A página foi recebida, mas não havia texto para extrair.")
     document.capture_status = "complete" if captured.get("source") == "html_text" else (captured.get("status") or "inconclusive")
     _persist_rendered_pages(session, job, document, pages, languages, folder)
@@ -414,8 +448,16 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
         for page in existing_pages
         if page.sequence in done and page.image_path and Path(page.image_path).exists()
     }
+    _step(session, job, "pdf", "running", "Lendo o PDF.")
+    job.stage = "pdf"
+    logger.info("job %s etapa pdf início %s", job.id, pdf_path)
     _release_db(session)
-    analysis = analyze_pdf(pdf_path, languages)
+    try:
+        analysis = analyze_pdf(pdf_path, languages)
+    except Exception:
+        _step(session, job, "pdf", "failed", "A leitura do PDF falhou.")
+        raise
+    logger.info("job %s etapa pdf fim páginas=%s", job.id, len(analysis.get("pages") or []))
     document.page_count = analysis["page_count"]
     document.page_count_estimate = analysis["page_count"]
     document.capture_status = "complete"
@@ -438,6 +480,7 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
 
 
 def _persist_rendered_pages(session, job, document, pages: list[dict], languages, folder: Path) -> None:
+    logger.info("job %s etapa gravação início páginas=%s", job.id, len(pages))
     if not _stage(session, job, document, "ocr", 40):
         return
     checkpoint = dict(job.checkpoint or {})
@@ -467,6 +510,7 @@ def _persist_rendered_pages(session, job, document, pages: list[dict], languages
         job.checkpoint = checkpoint
     document.page_count = len(done) or len(pages)
     document.page_count_estimate = document.page_count
+    logger.info("job %s etapa gravação fim páginas=%s", job.id, document.page_count)
     _step(session, job, "ocr", "done", f"{document.page_count} página(s) reconhecidas.")
 
 
