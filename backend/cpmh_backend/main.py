@@ -1,0 +1,55 @@
+from __future__ import annotations
+
+import os
+from contextlib import asynccontextmanager
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from cpmh_backend import __version__
+from cpmh_backend.api import router
+from cpmh_backend.config import get_settings
+from cpmh_backend.db import init_db
+from cpmh_backend.logging_setup import setup_logging
+from cpmh_backend.services.pipeline import QueueWorker
+
+
+def create_app(*, start_worker: bool = True) -> FastAPI:
+    settings = get_settings()
+    setup_logging(settings)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        init_db(settings)
+        worker = None
+        if start_worker:
+            worker = QueueWorker()
+            worker.start()
+            app.state.worker = worker
+        yield
+        if worker is not None:
+            worker.stop()
+
+    app = FastAPI(title="CPMH Document Intelligence", version=__version__, lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+        allow_credentials=False,
+    )
+    app.include_router(router, prefix="/api")
+    if settings.static_dir and settings.static_dir.exists():
+        app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="ui")
+    return app
+
+
+def main() -> None:
+    settings = get_settings()
+    uvicorn.run(create_app(), host=settings.host, port=settings.port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,11 @@
+[project]
+name = "cpmh-document-intelligence"
+version = "0.1.0"
+description = "CPMH Document Intelligence — captura autorizada, OCR, tradução e reconstrução documental."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]

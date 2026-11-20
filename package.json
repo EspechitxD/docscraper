@@ -1,0 +1,93 @@
+{
+  "name": "cpmh-document-intelligence",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CPMH Document Intelligence — captura, OCR e reconstrução documental local.",
+  "main": "electron/dist/main.js",
+  "author": "CPMH Digital",
+  "scripts": {
+    "dev:ui": "vite --config frontend/vite.config.ts --host 127.0.0.1 --port 5173",
+    "build:ui": "vite build --config frontend/vite.config.ts",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "dev": "npm run build:electron && concurrently -k \"npm run dev:ui\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "start": "npm run build:ui && npm run build:electron && electron .",
+    "typecheck": "tsc -p frontend/tsconfig.json --noEmit && tsc -p electron/tsconfig.json --noEmit",
+    "dist:win": "npm run build:ui && npm run build:electron && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.1.2",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "wait-on": "^8.0.3"
+  },
+  "dependencies": {
+    "@fontsource/gantari": "^5.2.6",
+    "@fontsource/jetbrains-mono": "^5.2.5",
+    "@fontsource/space-grotesk": "^5.2.8",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "build": {
+    "appId": "br.com.cpmh.document-intelligence",
+    "productName": "CPMH Document Intelligence",
+    "copyright": "CPMH Digital",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "electron/dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "frontend/dist",
+        "to": "ui"
+      },
+      {
+        "from": "assets/branding",
+        "to": "branding"
+      },
+      {
+        "from": "assets/icons",
+        "to": "icons"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icons/cpmh.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CPMH Document Intelligence",
+      "uninstallDisplayName": "CPMH Document Intelligence",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "CPMH-Document-Intelligence-${version}-win-x64.${ext}"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ],
+      "icon": "assets/branding/cpmh-mark-512.png",
+      "category": "Office"
+    }
+  }
+}
