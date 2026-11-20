@@ -1,5 +1,11 @@
 # Changelog
 
+## Acesso web — 20 de novembro de 2026
+
+- A captura classifica CAPTCHA, verificação humana, login, bloqueio e limite de pedidos antes de extrair.
+- A tarefa pausa, preserva o que já foi coletado e só retoma depois de uma checagem da própria captura.
+- O navegador integrado abre a URL numa sessão isolada por projeto e tarefa. O aplicativo não resolve o desafio nem copia cookies.
+
 ## Knowledge AI — 20 de novembro de 2026
 
 - Biblioteca local em cima dos documentos já processados: segmentos, FTS5, vetor `cpmh-hash-v1` e respostas com citação validada.

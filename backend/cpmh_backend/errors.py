@@ -14,6 +14,22 @@ class UrlRejected(AppError):
         super().__init__(message, status_code=400, code="url_rejected")
 
 
+class HttpAccess(UrlRejected):
+    """Resposta HTTP de bloqueio. O trecho não entra em log."""
+
+    def __init__(self, status_code: int, url: str, snippet: str):
+        super().__init__(f"O servidor respondeu {status_code} e o acesso foi interrompido.")
+        self.http_status = status_code
+        self.final_url = url
+        self.snippet = snippet[:4000]
+
+
+class AccessPaused(AppError):
+    def __init__(self, verdict: dict):
+        super().__init__(verdict.get("message") or "Acesso pausado.", status_code=409, code="access_paused")
+        self.verdict = verdict
+
+
 class CollisionError(AppError):
     def __init__(self, path: str):
         super().__init__(

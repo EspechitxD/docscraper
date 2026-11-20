@@ -8,6 +8,9 @@ declare global {
       openPath: (target: string) => Promise<string>;
       browserAttach: (bounds: { x: number; y: number; width: number; height: number } | null) => Promise<void>;
       browserNavigate: (url: string) => Promise<{ url: string; title: string }>;
+      openVerification: (url: string, projectId: string, jobId: string) => Promise<{ url: string; title: string; partition: string }>;
+      browserProbe: () => Promise<{ url: string; final_url: string; title: string; text: string; markers: string[]; iframes: string[]; scripts: string[]; status: number }>;
+      closeVerification: (projectId: string, jobId: string) => Promise<{ closed: boolean }>;
       browserBack: () => Promise<void>;
       browserForward: () => Promise<void>;
       browserReload: () => Promise<void>;

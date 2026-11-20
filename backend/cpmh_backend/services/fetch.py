@@ -5,7 +5,7 @@ from urllib.parse import urljoin
 
 import httpx
 
-from cpmh_backend.errors import UrlRejected
+from cpmh_backend.errors import HttpAccess, UrlRejected
 from cpmh_backend.security import Resolver, validate_url
 
 USER_AGENT = "CPMHDocumentIntelligence/0.1 (authorized desktop capture)"
@@ -62,7 +62,15 @@ def fetch_url(
                     current = urljoin(validated.url, location)
                     continue
                 if response.status_code >= 400:
-                    raise UrlRejected(f"O servidor respondeu {response.status_code} e o acesso foi interrompido.")
+                    snippet = ""
+                    if response.status_code in {401, 403, 429, 503}:
+                        raw = bytearray()
+                        for chunk in response.iter_bytes():
+                            raw.extend(chunk)
+                            if len(raw) >= 4000:
+                                break
+                        snippet = raw[:4000].decode("utf-8", errors="replace")
+                    raise HttpAccess(response.status_code, validated.url, snippet)
                 chunks: list[bytes] = []
                 total = 0
                 for chunk in response.iter_bytes():

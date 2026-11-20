@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, WebContentsView } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell, WebContentsView } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -13,6 +13,7 @@ type SessionInfo = { apiBase: string; token: string };
 let backend: ChildProcessWithoutNullStreams | null = null;
 let mainWindow: BrowserWindow | null = null;
 let browserView: WebContentsView | null = null;
+let browserPartition = "";
 let sessionInfo: SessionInfo = { apiBase: "", token: "" };
 let allowedBrowserUrl = "";
 let lastOverlay: unknown = null;
@@ -144,9 +145,21 @@ async function validateWithBackend(url: string): Promise<string> {
   return body.url;
 }
 
-function ensureBrowserView(): WebContentsView {
-  if (browserView && mainWindow) {
+function verificationPartition(projectId: string, jobId: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(projectId) || !/^[0-9a-f-]{36}$/i.test(jobId)) {
+    throw new Error("A sessão de verificação precisa de um projeto e de uma tarefa.");
+  }
+  return `persist:cpmh-${projectId}-${jobId}`;
+}
+
+function ensureBrowserView(partition = ""): WebContentsView {
+  if (browserView && browserPartition === partition && mainWindow) {
     return browserView;
+  }
+  if (browserView && mainWindow) {
+    mainWindow.contentView.removeChildView(browserView);
+    browserView.webContents.close();
+    browserView = null;
   }
   const view = new WebContentsView({
     webPreferences: {
@@ -154,8 +167,10 @@ function ensureBrowserView(): WebContentsView {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
+      partition: partition || undefined,
     },
   });
+  browserPartition = partition;
   view.webContents.setWindowOpenHandler(({ url }) => {
     void openAuthorized(url);
     return { action: "deny" };
@@ -185,10 +200,10 @@ function ensureBrowserView(): WebContentsView {
   return view;
 }
 
-async function openAuthorized(url: string): Promise<{ url: string; title: string }> {
+async function openAuthorized(url: string, partition = browserPartition): Promise<{ url: string; title: string }> {
   const checked = await validateWithBackend(url);
   allowedBrowserUrl = checked;
-  const view = ensureBrowserView();
+  const view = ensureBrowserView(partition);
   await view.webContents.loadURL(checked);
   return { url: view.webContents.getURL(), title: view.webContents.getTitle() };
 }
@@ -310,7 +325,44 @@ function registerIpc(): void {
       height: Math.round(bounds.height),
     });
   });
-  ipcMain.handle("browser-navigate", (_event, url: string) => openAuthorized(url));
+  ipcMain.handle("browser-navigate", (_event, url: string) => openAuthorized(url, ""));
+  ipcMain.handle("browser-open-verification", async (_event, url: string, projectId: string, jobId: string) => {
+    const partition = verificationPartition(projectId, jobId);
+    const checked = await validateWithBackend(url);
+    allowedBrowserUrl = checked;
+    const view = ensureBrowserView(partition);
+    await view.webContents.loadURL(checked);
+    return { url: view.webContents.getURL(), title: view.webContents.getTitle(), partition };
+  });
+  ipcMain.handle("browser-probe", async () => {
+    const contents = browserView?.webContents;
+    if (!contents) {
+      throw new Error("O navegador não está aberto.");
+    }
+    const observed = (await contents.executeJavaScript(`(() => {
+      const src = (el) => el.getAttribute("src") || "";
+      const selectors = [".g-recaptcha", "#g-recaptcha-response", ".h-captcha", ".cf-turnstile", "#challenge-form", ".cf-browser-verification", "input[type='password']", "#captcha", ".captcha"];
+      return {
+        title: document.title || "",
+        text: document.body ? document.body.innerText.slice(0, 1500) : "",
+        iframes: Array.from(document.querySelectorAll("iframe")).map(src).filter(Boolean).slice(0, 20),
+        scripts: Array.from(document.querySelectorAll("script")).map(src).filter(Boolean).slice(0, 30),
+        markers: selectors.filter((selector) => document.querySelector(selector))
+      };
+    })()`)) as { title: string; text: string; iframes: string[]; scripts: string[]; markers: string[] };
+    return { ...observed, url: contents.getURL(), final_url: contents.getURL(), status: 0 };
+  });
+  ipcMain.handle("browser-close-verification", async (_event, projectId: string, jobId: string) => {
+    const partition = verificationPartition(projectId, jobId);
+    await session.fromPartition(partition).clearStorageData();
+    if (browserPartition === partition && browserView && mainWindow) {
+      mainWindow.contentView.removeChildView(browserView);
+      browserView.webContents.close();
+      browserView = null;
+      browserPartition = "";
+    }
+    return { closed: true };
+  });
   ipcMain.handle("browser-back", () => {
     const history = browserView?.webContents.navigationHistory;
     if (history?.canGoBack()) {

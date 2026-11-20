@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
+import { ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
 
 type Tab = "process" | "review" | "structure" | "export" | "browser";
@@ -150,11 +150,12 @@ export function DocumentScreen() {
             {latest && isActiveState(latest.state) && latest.state !== "paused" && (
               <Button kind="secondary" onClick={() => api(`/jobs/${latest.id}/pause`, { method: "POST" }).then(load)}>Pausar</Button>
             )}
-            {latest?.state === "paused" && <Button onClick={() => api(`/jobs/${latest.id}/resume`, { method: "POST" }).then(load)}>Retomar</Button>}
+            {latest?.state === "paused" && <Button onClick={() => api(`/jobs/${latest.id}/resume`, { method: "POST" }).then(load).catch((cause) => setError(isApiError(cause) ? cause.message : "A retomada foi recusada."))}>Retomar</Button>}
             {latest && latest.state !== "completed" && latest.state !== "cancelled" && (
               <Button kind="danger" onClick={() => api(`/jobs/${latest.id}/cancel`, { method: "POST" }).then(load)}>Cancelar</Button>
             )}
           </div>
+          {latest && doc && <AccessPanel documentUrl={doc.url} projectId={doc.project_id} jobId={latest.id} onChanged={load} />}
           {latest && (
             <div>
               <h2>Etapa atual: {stateLabel(latest.stage)}</h2>
@@ -901,6 +902,105 @@ function BrowserPane({ documentId, initialUrl, chosen }: { documentId: string; i
       {overlayNote && <Notice>{overlayNote}</Notice>}
       {!window.cpmh && <Notice kind="warn">O Chromium embutido aparece na janela do aplicativo. Nesta página do navegador, a validação do endereço continua ativa, mas a vista não é desenhada por cima.</Notice>}
       <div className="browser-slot" ref={slot} />
+    </section>
+  );
+}
+
+type AccessView = {
+  access: {
+    state?: string;
+    provider?: string;
+    confidence?: number;
+    evidence?: string[];
+    message?: string;
+    partition?: string;
+    persistent?: boolean;
+    cleared?: boolean;
+    attempts?: { state: string; provider: string; at: string; source: string }[];
+  };
+  resumable: boolean;
+  reason: string;
+  events: { id: string; state: string; provider: string; evidence: string[]; created_at: string | null }[];
+};
+
+function AccessPanel({ documentUrl, projectId, jobId, onChanged }: { documentUrl: string; projectId: string; jobId: string; onChanged: () => Promise<void> }) {
+  const [view, setView] = useState<AccessView | null>(null);
+  const [note, setNote] = useState("");
+
+  async function load() {
+    const payload = await api<AccessView>(`/jobs/${jobId}/access`);
+    setView(payload.events.length || payload.access.state ? payload : null);
+  }
+
+  useEffect(() => {
+    load().catch(() => setView(null));
+  }, [jobId]);
+
+  if (!view?.access.state) return null;
+  const state = view.access.state;
+  const provider = ACCESS_PROVIDERS[view.access.provider || "none"] || view.access.provider || "—";
+
+  async function openBrowser() {
+    if (!window.cpmh?.openVerification) {
+      setNote("O navegador isolado abre na janela do aplicativo. Nesta página, use a importação do arquivo se a URL continuar bloqueada.");
+      return;
+    }
+    if (!documentUrl) {
+      setNote("Esta tarefa não tem URL para abrir.");
+      return;
+    }
+    await window.cpmh.openVerification(documentUrl, projectId, jobId);
+    setNote("A página abriu na sessão desta tarefa. Conclua a verificação no site. O aplicativo não resolve o desafio.");
+  }
+
+  async function recheck() {
+    setNote("");
+    if (window.cpmh?.browserProbe) {
+      const signals = await window.cpmh.browserProbe();
+      await api(`/jobs/${jobId}/access/observation`, { method: "POST", body: JSON.stringify(signals) });
+    }
+    await api(`/jobs/${jobId}/access/recheck`, { method: "POST" });
+    await load();
+    await onChanged();
+  }
+
+  async function closeSession() {
+    const closed = await api<{ partition: string }>(`/jobs/${jobId}/access/close`, { method: "POST" });
+    if (window.cpmh?.closeVerification) await window.cpmh.closeVerification(projectId, jobId);
+    setNote(closed.partition ? "A sessão desta tarefa foi limpa." : "Não havia sessão isolada para limpar.");
+    await load();
+  }
+
+  return (
+    <section className="panel stack">
+      <h2>Acesso à página</h2>
+      <p>{ACCESS_STATES[state] || state} · {provider} · confiança {Math.round((view.access.confidence || 0) * 100)}%</p>
+      <p>{view.access.message}</p>
+      {view.access.persistent && <Notice kind="warn">O bloqueio se repetiu. A captura por URL não continua. Importe o arquivo manualmente.</Notice>}
+      {view.reason && !view.resumable && <Notice kind="warn">{view.reason}</Notice>}
+      {view.access.evidence && view.access.evidence.length > 0 && <p>Evidências: {view.access.evidence.join(", ")}.</p>}
+      <p>A checagem que libera a retomada é feita pela captura. O que você vê no navegador fica registrado, mas não copia cookies nem autoriza a extração sozinho.</p>
+      <div className="row">
+        <Button kind="secondary" onClick={() => void openBrowser().catch((cause) => setNote(isApiError(cause) ? cause.message : "O navegador não abriu."))}>Abrir navegador</Button>
+        <Button kind="secondary" onClick={() => void recheck().catch((cause) => setNote(isApiError(cause) ? cause.message : "A checagem não foi concluída."))}>Verificar novamente</Button>
+        <Button kind="ghost" onClick={() => void closeSession().catch((cause) => setNote(isApiError(cause) ? cause.message : "A sessão não foi encerrada."))}>Encerrar sessão</Button>
+      </div>
+      {note && <Notice>{note}</Notice>}
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Quando</th><th>Estado</th><th>Tipo</th><th>Evidência</th></tr></thead>
+          <tbody>
+            {(view.events || []).map((event) => (
+              <tr key={event.id}>
+                <td>{formatWhen(event.created_at)}</td>
+                <td>{ACCESS_STATES[event.state] || event.state}</td>
+                <td>{ACCESS_PROVIDERS[event.provider] || event.provider}</td>
+                <td>{(event.evidence || []).join(", ") || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
