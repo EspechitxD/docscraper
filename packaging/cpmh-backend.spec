@@ -5,8 +5,11 @@ No Windows o produto é cpmh-backend.exe. Neste Linux o mesmo spec gera um
 binário Linux, útil para validar o freezer, não para o instalador NSIS.
 """
 
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_submodules
 
+ROOT = Path(SPECPATH).resolve().parent
 hidden = collect_submodules("uvicorn") + collect_submodules("cpmh_backend")
 hidden += [
     "sqlalchemy.dialects.sqlite",
@@ -19,8 +22,8 @@ hidden += [
 ]
 
 a = Analysis(
-    ["backend/cpmh_backend/__main__.py"],
-    pathex=["backend"],
+    [str(ROOT / "backend" / "cpmh_backend" / "__main__.py")],
+    pathex=[str(ROOT / "backend")],
     binaries=[],
     datas=[],
     hiddenimports=hidden,

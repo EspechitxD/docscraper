@@ -2,6 +2,7 @@
 
 ## Fase 10 — 20 de novembro de 2026
 
+- A CI Linux instala a fonte WQY usada no PDF em chinês. O spec do PyInstaller resolve o backend a partir da raiz do repositório.
 - A revisão de uma região passa a atualizar a representação usada por DOCX, PDF, TXT, JSON e pacote.
 - Histórico de revisão e migração aditiva para a coluna de evidência.
 - Modos de tradução unificados, seleção por ID e glossário escolhido no projeto.
