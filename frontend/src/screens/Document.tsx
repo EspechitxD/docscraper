@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
+import { api, apiBlob, apiDownload, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
 import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatDuration, formatWhen, isActiveState, nextStep, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
@@ -125,8 +125,16 @@ export function DocumentScreen() {
             <span>Tipo</span><strong>{doc.source_kind || "desconhecido"}</strong>
             <span>Inclusão</span><strong>{formatWhen(doc.added_at)}</strong>
             <span>Conclusão</span><strong>{formatWhen(doc.completed_at)}</strong>
+            <span>Páginas</span><strong>{doc.page_count ?? 0}</strong>
             <span>Exportado</span><strong>{doc.exported_formats.join(", ") || "ainda não"}</strong>
           </div>
+          {(doc.page_count ?? 0) > 0 ? (
+            <div className="row">
+              <Button kind="secondary" onClick={() => setTab("review")}>Ver as {doc.page_count} folhas</Button>
+            </div>
+          ) : (
+            <Notice kind="warn">Neste computador ainda não há folhas. Clique em Recapturar e espere a barra terminar. As imagens ficam na aba Revisão.</Notice>
+          )}
           <Field label="Tradução nesta tarefa">
             <select className="select" value={translateMode} onChange={(event) => setTranslateMode(event.target.value)}>
               {TRANSLATION_MODES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
@@ -699,6 +707,7 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
   const [error, setError] = useState("");
   const [files, setFiles] = useState<{ name: string; path: string; format: string; size: number }[]>([]);
   const [collision, setCollision] = useState<ApiError | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api<{ values: { default_output_dir?: string; default_export_mode?: string; default_format?: string } }>("/preferences").then((payload) => {
@@ -721,6 +730,33 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
     if (picked) {
       directoryTouched.current = true;
       setDirectory(picked);
+    }
+  }
+
+  async function downloadNow() {
+    setError("");
+    setBusy(true);
+    try {
+      const downloaded = await apiDownload(`/documents/${document.id}/export/download`, {
+        method: "POST",
+        body: JSON.stringify({
+          formats,
+          mode,
+          output_name: name,
+          translate_mode: translateMode,
+        }),
+      });
+      const url = URL.createObjectURL(downloaded.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = downloaded.filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      await onDone();
+    } catch (cause) {
+      setError(isApiError(cause) ? cause.message : "O download falhou.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -784,8 +820,11 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
         {hasDesktopBridge() && <Button kind="secondary" onClick={() => void chooseDir()}>Escolher pasta</Button>}
       </div>
       {!hasDesktopBridge() && <p className="lede">No aplicativo desktop, a pasta é escolhida pelo seletor do sistema. Aqui informe o caminho absoluto.</p>}
-      <p>Revisão: {summary}. A exportação reutiliza OCR e capturas já gravados.</p>
-      <Button onClick={() => void exportNow(null)}>Exportar</Button>
+      <p>Revisão: {summary}. Baixar grava o arquivo na pasta de downloads, sem escolher destino. Folhas invertidas são relidas nessa hora.</p>
+      <div className="row">
+        <Button onClick={() => void downloadNow()} disabled={busy}>{busy ? "Preparando o arquivo…" : "Baixar arquivo"}</Button>
+        <Button kind="secondary" onClick={() => void exportNow(null)} disabled={busy}>Salvar numa pasta</Button>
+      </div>
       <div className="table-wrap">
         <table>
           <thead><tr><th>Arquivo</th><th>Formato</th><th>Caminho</th></tr></thead>

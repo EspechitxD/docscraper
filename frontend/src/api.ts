@@ -56,6 +56,21 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.text()) as T;
 }
 
+export async function apiDownload(path: string, init: RequestInit = {}): Promise<{ blob: Blob; filename: string }> {
+  const headers = new Headers(init.headers);
+  headers.set("X-CPMH-Token", token);
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${apiBase}/api${path}`, { ...init, headers });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const disposition = response.headers.get("content-disposition") || "";
+  const match = /filename="?([^";]+)"?/.exec(disposition);
+  return { blob: await response.blob(), filename: match?.[1] || "documento" };
+}
+
 export async function apiBlob(path: string): Promise<Blob> {
   const response = await fetch(`${apiBase}/api${path}`, { headers: { "X-CPMH-Token": token } });
   if (!response.ok) {

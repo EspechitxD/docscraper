@@ -140,7 +140,7 @@ class ExportIn(BaseModel):
     formats: list[str]
     mode: str = "editable"
     output_name: str
-    output_dir: str
+    output_dir: str = ""
     collision: str | None = None
     translate_mode: str = "none"
 
@@ -1496,6 +1496,50 @@ def export_route(document_id: str, payload: ExportIn, db: Session = Depends(get_
         raise_app(exc)
     audit(db, "export", "Documento exportado.", {"id": item.id, "formats": payload.formats})
     return {"files": files}
+
+
+_DOWNLOAD_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+    "txt": "text/plain; charset=utf-8",
+    "json": "application/json",
+    "package": "application/zip",
+}
+
+
+@router.post("/documents/{document_id}/export/download", dependencies=[Depends(require_token)])
+def export_download(document_id: str, payload: ExportIn, db: Session = Depends(get_db)):
+    """Gera o arquivo na pasta de dados do aplicativo e devolve o download."""
+    item = db.get(Document, document_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
+    from cpmh_backend.services.exporting import export_document
+
+    settings = get_settings()
+    folder = settings.data_dir / "exports"
+    folder.mkdir(parents=True, exist_ok=True)
+    formats = list(payload.formats)
+    if len(formats) > 1 and "package" not in formats:
+        formats.append("package")
+    try:
+        files = export_document(
+            db,
+            item,
+            settings,
+            formats=formats,
+            mode=payload.mode,
+            output_name=payload.output_name,
+            output_dir=str(folder),
+            collision="version",
+            translate_mode=payload.translate_mode,
+        )
+    except AppError as exc:
+        raise_app(exc)
+    chosen = next((row for row in files if row["format"] == "package"), None) if len(formats) > 1 else files[0]
+    if chosen is None:
+        chosen = files[0]
+    audit(db, "export", "Documento baixado.", {"id": item.id, "formats": formats})
+    return FileResponse(chosen["path"], filename=chosen["name"], media_type=_DOWNLOAD_TYPES.get(chosen["format"], "application/octet-stream"))
 
 
 @router.get("/documents/{document_id}/exports", dependencies=[Depends(require_token)])
