@@ -9,6 +9,9 @@ de rede local, desligada por padrão.
 from __future__ import annotations
 
 import ipaddress
+import ntpath
+import os
+import posixpath
 import re
 import socket
 from collections.abc import Callable
@@ -191,23 +194,114 @@ def domain_of(url: str) -> str:
         return ""
 
 
+def user_output_dir(install_dir: Path | None = None) -> Path:
+    """Pasta de exportação fora do aplicativo e das pastas do sistema."""
+    home = Path.home()
+    for name in ("Documents", "Documentos", "Downloads", "Desktop"):
+        folder = home / name / "CPMH"
+        if not _path_is_forbidden(folder, install_dir):
+            return folder
+    return home / "CPMH"
+
+
+def prepare_output_dir(path: str | Path | None, *, install_dir: Path | None = None) -> Path:
+    text = str(path or "").strip().strip('"').strip("'")
+    if text:
+        return assert_output_dir_allowed(Path(text).expanduser(), install_dir=install_dir)
+    chosen = user_output_dir(install_dir)
+    if _path_is_forbidden(chosen, install_dir):
+        raise AppError(f"Não há uma pasta de destino segura. Crie uma pasta fora do aplicativo, por exemplo {chosen}.")
+    try:
+        chosen.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise AppError(f"Não consegui criar a pasta {chosen}. {exc.strerror or 'O sistema recusou a gravação.'}") from exc
+    return assert_output_dir_allowed(chosen, install_dir=install_dir)
+
+
+def _is_windows_text(text: str) -> bool:
+    return text.startswith("\\\\") or re.match(r"^[A-Za-z]:[\\/]", text) is not None
+
+
+def _flavour(text: str):
+    return ntpath if _is_windows_text(text) or (os.name == "nt" and not text.startswith("/")) else posixpath
+
+
+def _too_broad(text: str) -> bool:
+    flavour = _flavour(text)
+    normalized = flavour.normpath(text)
+    return flavour.dirname(normalized) == normalized
+
+
+def _inside(child: str, root: str) -> bool:
+    """True when child is root or a directory inside it. Paths of different systems never match."""
+    if _is_windows_text(child) != _is_windows_text(root):
+        return False
+    flavour = _flavour(child)
+    child_n = flavour.normcase(flavour.normpath(child))
+    root_n = flavour.normcase(flavour.normpath(root))
+    if not flavour.isabs(child_n) or not flavour.isabs(root_n) or _too_broad(root_n):
+        return False
+    try:
+        common = flavour.commonpath([child_n, root_n])
+    except ValueError:
+        return False
+    return flavour.normcase(common) == root_n
+
+
+def _resolved_text(path: Path) -> str:
+    text = str(path)
+    if os.name != "nt" and _is_windows_text(text):
+        return ntpath.normpath(text)
+    try:
+        return str(path.expanduser().resolve())
+    except OSError:
+        return text
+
+
+def _path_is_forbidden(path: Path, install_dir: Path | None) -> bool:
+    resolved = _resolved_text(path)
+    for root in _forbidden_output_roots(install_dir, resolved):
+        if _inside(resolved, root):
+            return True
+    return False
+
+
+def _forbidden_output_roots(install_dir: Path | None, target: str) -> list[str]:
+    roots: list[str] = []
+    if _is_windows_text(target) or os.name == "nt":
+        if os.name == "nt":
+            roots.append(os.environ.get("SystemRoot", r"C:\Windows"))
+        roots.extend([r"C:\Windows", r"C:\Program Files", r"C:\Program Files (x86)"])
+    if not _is_windows_text(target):
+        roots.extend(["/etc", "/usr", "/bin", "/sbin", "/proc", "/sys", "/dev", "/boot"])
+    if install_dir is not None:
+        roots.append(_resolved_text(install_dir))
+    return roots
+
+
 def assert_output_dir_allowed(path: Path, *, install_dir: Path | None = None) -> Path:
+    raw = str(path)
+    if os.name != "nt" and _is_windows_text(raw):
+        raise AppError(f"Não consegui usar a pasta {raw} neste computador.")
     try:
         resolved = path.expanduser().resolve()
     except OSError as exc:
-        raise AppError("A pasta de destino é inválida.") from exc
-    forbidden_roots = [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"), Path("/proc"), Path("/sys"), Path("/dev"), Path("/boot")]
-    if install_dir is not None:
-        forbidden_roots.append(install_dir.resolve())
-    for root in forbidden_roots:
-        if resolved == root or root in resolved.parents:
-            raise AppError("Essa pasta de destino não é permitida.")
+        raise AppError(f"A pasta de destino é inválida: {raw}.") from exc
+    if _path_is_forbidden(resolved, install_dir):
+        raise AppError(
+            f"Não consigo gravar em {resolved}. Essa pasta fica dentro do aplicativo ou do sistema. Use {user_output_dir(install_dir)}."
+        )
     if not resolved.exists():
         if not resolved.parent.exists():
-            raise AppError("A pasta pai do destino não existe.")
-        resolved.mkdir(parents=False, exist_ok=False)
+            raise AppError(f"A pasta pai de {resolved} não existe.")
+        try:
+            resolved.mkdir(parents=False, exist_ok=False)
+        except OSError as exc:
+            raise AppError(
+                f"Não consegui criar a pasta {resolved}. {exc.strerror or 'O sistema recusou a gravação.'}"
+            ) from exc
     if not resolved.is_dir():
-        raise AppError("O destino precisa ser uma pasta.")
+        raise AppError(f"O destino precisa ser uma pasta: {resolved}.")
     return resolved
 
 

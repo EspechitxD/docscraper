@@ -53,9 +53,10 @@ def timeout_for(host: str, default: float, table: dict | None) -> float:
     return default
 
 
-def annotate(verdict: dict) -> dict:
-    item = dict(verdict)
-    state = item.get("state") or ""
+def annotate(verdict: dict | None) -> dict:
+    item = dict(verdict or {})
+    state = item.get("state") or "UNKNOWN_BLOCK"
+    item["state"] = state
     provider = item.get("provider") or "none"
     mechanism = {
         "CAPTCHA_DETECTED": "captcha",
@@ -88,7 +89,8 @@ def annotate(verdict: dict) -> dict:
     return item
 
 
-def retry_plan(verdict: dict, *, attempt: int, retry_after: float | None, random_unit: float) -> dict:
+def retry_plan(verdict: dict | None, *, attempt: int, retry_after: float | None, random_unit: float) -> dict:
+    verdict = verdict or {}
     state = verdict.get("state") or ""
     status = int(verdict.get("http_status") or 0)
     blocked = state in {
@@ -164,23 +166,46 @@ def looks_like_robots(text: str) -> bool:
     return False
 
 
+def declared_pdf(html: str, page_url: str) -> dict | None:
+    """PDF que a própria página declara como o documento, por metadado ou link alternate."""
+    if not html or not page_url:
+        return None
+    origin = _endpoint(page_url)
+    found: list[str] = []
+    for tag in _tags(html, "meta"):
+        if str(tag.get("name") or "").lower() == "citation_pdf_url" and tag.get("content"):
+            found.append(tag["content"])
+    for tag in _tags(html, "link"):
+        rel = str(tag.get("rel") or "").lower()
+        kind = str(tag.get("type") or "").lower()
+        if "alternate" in rel and "pdf" in kind and tag.get("href"):
+            found.append(tag["href"])
+    return _same_site_pdf(found, page_url, origin)
+
+
 def public_alternative(html: str, page_url: str) -> dict | None:
     if not html or not page_url:
         return None
     origin = _endpoint(page_url)
     found: list[str] = []
     for tag in _tags(html, "meta"):
-        if tag.get("name", "").lower() == "citation_pdf_url" and tag.get("content"):
+        if str(tag.get("name") or "").lower() == "citation_pdf_url" and tag.get("content"):
             found.append(tag["content"])
     for tag in _tags(html, "link"):
-        if "alternate" in tag.get("rel", "").lower() and "pdf" in tag.get("type", "").lower() and tag.get("href"):
+        rel = str(tag.get("rel") or "").lower()
+        kind = str(tag.get("type") or "").lower()
+        if "alternate" in rel and "pdf" in kind and tag.get("href"):
             found.append(tag["href"])
     for tag in _tags(html, "a"):
-        href = tag.get("href", "")
+        href = str(tag.get("href") or "")
         if href.lower().split("?", 1)[0].endswith(".pdf"):
             found.append(href)
+    return _same_site_pdf(found, page_url, origin)
+
+
+def _same_site_pdf(found: list[str], page_url: str, origin: tuple[str, int]) -> dict | None:
     for candidate in found:
-        absolute = urljoin(page_url, candidate)
+        absolute = urljoin(page_url, str(candidate))
         target = urlsplit(absolute)
         if target.scheme not in {"http", "https"} or _endpoint(absolute) != origin:
             continue

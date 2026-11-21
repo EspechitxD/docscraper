@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
+import unicodedata
 
 from PIL import Image
 
@@ -38,26 +40,104 @@ def tesseract_status() -> dict:
     }
 
 
-def _rotate_right_angles(image: Image.Image) -> tuple[Image.Image, int]:
+_HYPHEN_BREAK = re.compile(r"([A-Za-zÀ-ÿ]{2,})-\s+([a-zà-ÿ])")
+
+
+def dehyphenate_text(text: str) -> str:
+    """Junta a palavra partida no fim da linha, como 'clean-' + 'ing'."""
+    previous = None
+    current = text or ""
+    while current != previous:
+        previous = current
+        current = _HYPHEN_BREAK.sub(r"\1\2", current)
+    return current
+
+
+_SPACE_BEFORE = re.compile(r"[ \t]+([,.;:!?%)\]])")
+_SPACE_AFTER = re.compile(r"([(\[])[ \t]+")
+_MULTI_SPACE = re.compile(r"[ \t]{2,}")
+
+
+def polish_ocr_text(text: str) -> str:
+    """Limpa a leitura sem trocar letras: hífen de fim de linha, espaços e pontuação."""
+    current = unicodedata.normalize("NFKC", (text or "").replace("\u00ad", ""))
+    current = dehyphenate_text(current)
+    current = _SPACE_BEFORE.sub(r"\1", current)
+    current = _SPACE_AFTER.sub(r"\1", current)
+    current = _MULTI_SPACE.sub(" ", current)
+    return current.strip()
+
+
+def _read_osd(image: Image.Image) -> tuple[int, float]:
     try:
         import pytesseract
 
         osd = pytesseract.image_to_osd(image)
     except Exception:
-        return image, 0
+        return 0, 0.0
     angle = 0
+    confidence = 0.0
     for line in osd.splitlines():
-        if line.lower().startswith("rotate:"):
+        lowered = line.lower()
+        if lowered.startswith("rotate:"):
             try:
                 angle = int(line.split(":", 1)[1].strip())
             except ValueError:
                 angle = 0
+        elif lowered.startswith("orientation confidence:"):
+            try:
+                confidence = float(line.split(":", 1)[1].strip())
+            except ValueError:
+                confidence = 0.0
+    return angle, confidence
+
+
+def _sample_score(image: Image.Image) -> tuple[float, int]:
+    import pytesseract
+    from pytesseract import Output
+
+    sample = image.convert("L")
+    sample.thumbnail((1000, 1400))
+    try:
+        data = pytesseract.image_to_data(sample, lang="eng", output_type=Output.DICT)
+    except Exception:
+        return 0.0, 0
+    confidences: list[float] = []
+    letters = 0
+    for text, conf in zip(data["text"], data["conf"]):
+        token = (text or "").strip()
+        try:
+            value = float(conf)
+        except (TypeError, ValueError):
+            continue
+        if not token or value < 0:
+            continue
+        confidences.append(value)
+        letters += sum(character.isalpha() for character in token)
+    if not confidences:
+        return 0.0, 0
+    return sum(confidences) / len(confidences), letters
+
+
+def _apply_angle(image: Image.Image, angle: int) -> tuple[Image.Image, int]:
     if angle == 90:
         return image.rotate(-90, expand=True), 90
     if angle == 180:
         return image.rotate(180, expand=True), 180
     if angle == 270:
         return image.rotate(90, expand=True), 270
+    return image, 0
+
+
+def _rotate_right_angles(image: Image.Image) -> tuple[Image.Image, int]:
+    image = image.convert("RGB")
+    angle, confidence = _read_osd(image)
+    if confidence >= 2 and angle in {0, 90, 180, 270}:
+        return _apply_angle(image, angle)
+    upright = _sample_score(image)
+    turned = _sample_score(image.rotate(180, expand=True))
+    if turned[0] >= upright[0] + 12 and turned[1] >= upright[1]:
+        return image.rotate(180, expand=True), 180
     return image, 0
 
 
@@ -106,7 +186,7 @@ def recognize(image: Image.Image, languages: list[str] | None = None) -> tuple[l
         words = grouped[key]
         if not words:
             continue
-        text = " ".join(word.text for word in words)
+        text = dehyphenate_text(" ".join(word.text for word in words))
         x = min(word.bbox[0] for word in words)
         y = min(word.bbox[1] for word in words)
         right = max(word.bbox[0] + word.bbox[2] for word in words)
@@ -129,7 +209,10 @@ def recognize(image: Image.Image, languages: list[str] | None = None) -> tuple[l
             gap = line.bbox[1] - (previous.bbox[1] + previous.bbox[3])
             same_column = abs(line.bbox[0] - previous.bbox[0]) < 0.08
             if 0 <= gap < max(line.font_size, 0.012) * 0.9 and same_column:
-                previous.text = (previous.text + " " + line.text).strip()
+                if previous.text.endswith("-") and line.text[:1].islower():
+                    previous.text = dehyphenate_text(previous.text[:-1] + line.text)
+                else:
+                    previous.text = dehyphenate_text(f"{previous.text} {line.text}".strip())
                 x = min(previous.bbox[0], line.bbox[0])
                 y = previous.bbox[1]
                 right = max(previous.bbox[0] + previous.bbox[2], line.bbox[0] + line.bbox[2])

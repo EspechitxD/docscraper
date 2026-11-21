@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import logging
 import shutil
+from html.parser import HTMLParser
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 import time
 
-from cpmh_backend.access import classify
+from cpmh_backend.access import classify, signals_from_html
 from cpmh_backend.hashing import dhash, looks_blank, looks_partial, sha256_file
 from cpmh_backend.intelligence import Block, PageObservation, WordBox, decide_capture
 from cpmh_backend.security import validate_url
+
+logger = logging.getLogger("cpmh")
 
 _SIGNALS = """
 () => {
@@ -20,14 +27,14 @@ _SIGNALS = """
     "#challenge-form", ".cf-browser-verification", "#cf-challenge-running",
     "input[type='password']", "#captcha", ".captcha"
   ];
-  return {
+  return JSON.stringify({
     title: document.title || "",
     text: document.body ? document.body.innerText.slice(0, 1500) : "",
     ready: document.readyState,
     iframes: Array.from(document.querySelectorAll("iframe")).map(src).filter(Boolean).slice(0, 20),
     scripts: Array.from(document.querySelectorAll("script")).map(src).filter(Boolean).slice(0, 30),
     markers: selectors.filter((selector) => document.querySelector(selector))
-  };
+  });
 }
 """
 
@@ -38,13 +45,13 @@ _EXTRACT = """
   const nodes = Array.from(document.querySelectorAll("button, a, [role='button']"));
   let next = null;
   for (const el of nodes) {
-    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
-    if (/(próxima página|proxima pagina|next page|^next$|rel)/.test(label) || el.getAttribute("rel") === "next") {
+    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("title") || "") + " " + (el.id || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
+    if (el.id === "nextPageButton" || el.getAttribute("rel") === "next" || /(próxima página|proxima pagina|next page|下一页|^next$)/.test(label)) {
       next = el;
       break;
     }
   }
-  return {
+  return JSON.stringify({
     title: document.title || "",
     counter: counter ? [Number(counter[1]), Number(counter[2])] : null,
     nextPresent: Boolean(next),
@@ -52,7 +59,7 @@ _EXTRACT = """
     ready: document.readyState,
     scrollWidth: document.documentElement.scrollWidth,
     scrollHeight: document.documentElement.scrollHeight
-  };
+  });
 }
 """
 
@@ -60,9 +67,9 @@ _CLICK = """
 () => {
   const nodes = Array.from(document.querySelectorAll("button, a, [role='button']"));
   for (const el of nodes) {
-    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
+    const label = ((el.getAttribute("aria-label") || "") + " " + (el.getAttribute("title") || "") + " " + (el.id || "") + " " + (el.getAttribute("rel") || "")).toLowerCase();
     const rel = el.getAttribute("rel");
-    if (rel === "next" || /(próxima página|proxima pagina|next page)/.test(label)) {
+    if (el.id === "nextPageButton" || rel === "next" || /(próxima página|proxima pagina|next page|下一页)/.test(label)) {
       if (el.disabled || el.getAttribute("aria-disabled") === "true") return false;
       el.click();
       return true;
@@ -76,7 +83,7 @@ _DOM = """
 () => {
   const root = document.documentElement;
   const pick = Array.from(document.querySelectorAll("h1,h2,h3,p,li,td,th,caption,figcaption,header,footer"));
-  return {
+  return JSON.stringify({
     width: root.scrollWidth,
     height: root.scrollHeight,
     nodes: pick.slice(0, 400).map((el) => {
@@ -90,9 +97,42 @@ _DOM = """
         h: rect.height
       };
     })
-  };
+  });
 }
 """
+
+
+def _allow_route(route, allow_local: bool) -> None:
+    try:
+        request = getattr(route, "request", None)
+        validate_url(getattr(request, "url", "") or "", allow_local=allow_local)
+        route.continue_()
+    except Exception:
+        try:
+            route.abort()
+        except Exception:
+            return
+
+
+def browser_snapshot(value) -> dict | None:
+    """O navegador às vezes devolve nulo em vez do objeto da página."""
+    return value if isinstance(value, dict) else None
+
+
+def evaluate_page(page, script: str) -> dict | None:
+    """Lê um objeto calculado na página.
+
+    Há páginas que definem `then` em Object.prototype. O Playwright trata
+    qualquer objeto devolvido como Promise e recebe undefined. Uma string
+    JSON não entra nesse caminho, então o objeto nasce aqui no Python.
+    """
+    value = page.evaluate(script)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    return value if isinstance(value, dict) else None
 
 
 def browser_status() -> dict:
@@ -118,47 +158,126 @@ def capture_html(
     status_info = browser_status()
     if not status_info["playwright"] or not status_info["chrome"]:
         raise RuntimeError("Chromium ou Playwright não está disponível para a captura HTML.")
-    from playwright.sync_api import Error as PlaywrightError
-    from playwright.sync_api import TimeoutError as PlaywrightTimeout
-    from playwright.sync_api import sync_playwright
 
     out_dir.mkdir(parents=True, exist_ok=True)
     observations: list[PageObservation] = []
     pages: list[dict] = []
+    try:
+        return _capture_with_browser(
+            validated.url,
+            out_dir,
+            allow_local=allow_local,
+            max_pages=max_pages,
+            timeout=timeout,
+            observations=observations,
+            pages=pages,
+        )
+    except Exception as exc:
+        logger.exception("captura html")
+        return {
+            "status": "browser_failed",
+            "pages": pages,
+            "final_url": validated.url,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
+def _visible_canvas(page):
+    """A folha desenhada num canvas, a que está mais dentro da janela."""
+    raw = page.evaluate(
+        """() => {
+      const viewHeight = window.innerHeight || 800;
+      const nodes = Array.from(document.querySelectorAll('canvas'));
+      let best = null;
+      nodes.forEach((canvas, index) => {
+        const rect = canvas.getBoundingClientRect();
+        if (rect.width < 400 || rect.height < 480) return;
+        const visible = Math.min(rect.bottom, viewHeight) - Math.max(rect.top, 0);
+        const score = visible > 0 ? visible : rect.width;
+        if (!best || score > best.score) best = {index, score};
+      });
+      return best ? JSON.stringify(best) : '';
+    }"""
+    )
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        chosen = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return page.locator("canvas").nth(int(chosen["index"]))
+
+
+def _canvas_image(locator):
+    try:
+        payload = locator.screenshot(type="png", timeout=5000)
+    except Exception:
+        return None
+    return Image.open(io.BytesIO(payload))
+
+
+def _canvas_digest(locator) -> str:
+    try:
+        payload = locator.screenshot(type="png", timeout=5000)
+    except Exception:
+        return ""
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _wait_for_painted_canvas(page, timeout: float) -> bool:
+    """Espera o visor desenhar a folha. Sem canvas grande, segue na hora."""
+    if _visible_canvas(page) is None:
+        return False
+    deadline = time.perf_counter() + min(max(timeout, 1.0), 20.0)
+    while True:
+        locator = _visible_canvas(page)
+        image = _canvas_image(locator) if locator is not None else None
+        if image is not None and not looks_blank(image):
+            image.close()
+            return True
+        if image is not None:
+            image.close()
+        if time.perf_counter() >= deadline:
+            return False
+        page.wait_for_timeout(400)
+
+
+def _capture_with_browser(url, out_dir, *, allow_local, max_pages, timeout, observations, pages) -> dict:
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import sync_playwright
+
     capture_status = "inconclusive"
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel="chrome", headless=True)
         try:
             context = browser.new_context(viewport={"width": 1280, "height": 1600}, device_scale_factor=1)
+            context.set_default_timeout(int(timeout * 1000))
+            context.set_default_navigation_timeout(int(timeout * 1000))
             page = context.new_page()
 
-            def guard(route):
-                try:
-                    validate_url(route.request.url, allow_local=allow_local)
-                except Exception:
-                    route.abort()
-                    return
-                route.continue_()
-
-            page.route("**/*", guard)
+            page.route("**/*", lambda route: _allow_route(route, allow_local))
             started = time.perf_counter()
             try:
-                response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
+                response = page.goto(url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
             except PlaywrightTimeout:
-                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "network"})
-                return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
+                verdict = classify({"url": url, "final_url": url, "navigation_error": "network"})
+                return {"status": "blocked", "pages": [], "final_url": url, "access": verdict}
             except PlaywrightError:
-                verdict = classify({"url": validated.url, "final_url": validated.url, "navigation_error": "browser"})
-                return {"status": "blocked", "pages": [], "final_url": validated.url, "access": verdict}
+                verdict = classify({"url": url, "final_url": url, "navigation_error": "browser"})
+                return {"status": "blocked", "pages": [], "final_url": url, "access": verdict}
             try:
                 page.wait_for_load_state("networkidle", timeout=min(3000, int(timeout * 1000)))
             except PlaywrightTimeout:
                 pass
             page.wait_for_timeout(250)
-            observed = page.evaluate(_SIGNALS)
+            observed = evaluate_page(page, _SIGNALS)
+            if observed is None:
+                verdict = classify({"url": url, "final_url": page.url, "navigation_error": "browser"})
+                return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
             verdict = classify(
                 {
-                    "url": validated.url,
+                    "url": url,
                     "final_url": page.url,
                     "status": response.status if response is not None else 0,
                     "title": observed.get("title") or "",
@@ -173,15 +292,25 @@ def capture_html(
             )
             if verdict["state"] != "ACCESS_GRANTED":
                 return {"status": "blocked", "pages": [], "final_url": page.url, "access": verdict}
+            canvas_pages = _wait_for_painted_canvas(page, timeout)
+            if canvas_pages:
+                logger.info("visor desenhou a folha; a captura usa o canvas")
+            seen_pages: set[str] = set()
             for index in range(max_pages):
                 png = out_dir / f"capture-{index + 1:04d}.png"
-                page.screenshot(path=str(png), full_page=True)
-                info = page.evaluate(_EXTRACT)
-                dom = page.evaluate(_DOM)
+                surface = _visible_canvas(page) if canvas_pages else None
+                if surface is not None:
+                    surface.screenshot(path=str(png), timeout=8000)
+                    dom = None
+                else:
+                    page.screenshot(path=str(png), full_page=True)
+                    dom = evaluate_page(page, _DOM)
+                info = evaluate_page(page, _EXTRACT) or {}
                 image = Image.open(png)
                 digest = sha256_file(png)
                 perceptual = dhash(image)
-                counter = info.get("counter") or [None, None]
+                raw_counter = info.get("counter")
+                counter = list(raw_counter) if isinstance(raw_counter, (list, tuple)) and len(raw_counter) >= 2 else [None, None]
                 observation = PageObservation(
                     content_hash=digest,
                     phash=perceptual,
@@ -193,6 +322,7 @@ def capture_html(
                     partial=looks_partial(image),
                 )
                 observations.append(observation)
+                seen_pages.add(digest)
                 decision = decide_capture(observations, hit_max=index + 1 >= max_pages)
                 pages.append(
                     {
@@ -221,7 +351,21 @@ def capture_html(
                         else:
                             capture_status = "inconclusive" if info.get("nextPresent") else "complete"
                         break
+                    previous = digest
                     page.wait_for_timeout(400)
+                    if canvas_pages:
+                        changed_to = ""
+                        deadline = time.perf_counter() + min(8.0, max(timeout, 1.0))
+                        while time.perf_counter() < deadline:
+                            locator = _visible_canvas(page)
+                            current = _canvas_digest(locator) if locator is not None else ""
+                            if current and current != previous:
+                                changed_to = current
+                                break
+                            page.wait_for_timeout(400)
+                        if not changed_to or changed_to in seen_pages:
+                            capture_status = "complete"
+                            break
                     continue
                 capture_status = "complete" if decision == "complete" else "inconclusive"
                 break
@@ -234,7 +378,7 @@ def capture_html(
         if len(pages) > 1 and pages[-1]["sha256"] == pages[-2]["sha256"]:
             Path(pages[-1]["path"]).unlink(missing_ok=True)
             pages.pop()
-    return {"status": capture_status, "pages": pages, "final_url": validated.url}
+    return {"status": capture_status, "pages": pages, "final_url": url}
 
 
 def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
@@ -252,15 +396,7 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
         try:
             page = browser.new_context(viewport={"width": 1280, "height": 1600}).new_page()
 
-            def guard(route):
-                try:
-                    validate_url(route.request.url, allow_local=allow_local)
-                except Exception:
-                    route.abort()
-                    return
-                route.continue_()
-
-            page.route("**/*", guard)
+            page.route("**/*", lambda route: _allow_route(route, allow_local))
             try:
                 response = page.goto(validated.url, wait_until="domcontentloaded", timeout=int(timeout * 1000))
             except PlaywrightTimeout:
@@ -272,7 +408,9 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             except PlaywrightTimeout:
                 pass
             page.wait_for_timeout(200)
-            observed = page.evaluate(_SIGNALS)
+            observed = evaluate_page(page, _SIGNALS)
+            if observed is None:
+                return classify({"url": validated.url, "final_url": page.url, "navigation_error": "browser"})
             return classify(
                 {
                     "url": validated.url,
@@ -291,7 +429,113 @@ def probe_html(url: str, *, allow_local: bool, timeout: float) -> dict:
             browser.close()
 
 
-def _blocks_from_dom(dom: dict, image_size: tuple[int, int]) -> list[Block]:
+class _VisibleHtml(HTMLParser):
+    _SKIP = {"script", "style", "noscript", "template", "svg"}
+    _BREAK = {"p", "div", "h1", "h2", "h3", "h4", "li", "tr", "section", "article", "blockquote", "figcaption", "pre", "br"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[tuple[str, str]] = []
+        self._skip = 0
+        self._buffer: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        name = tag.lower()
+        if name in self._SKIP:
+            self._skip += 1
+        if name == "br":
+            self._flush("p")
+
+    def handle_endtag(self, tag):
+        name = tag.lower()
+        if name in self._SKIP and self._skip:
+            self._skip -= 1
+            return
+        if name in self._BREAK:
+            self._flush(name)
+
+    def handle_data(self, data):
+        if self._skip or not data:
+            return
+        self._buffer.append(data)
+
+    def close(self):
+        super().close()
+        self._flush("p")
+
+    def _flush(self, tag: str) -> None:
+        text = " ".join("".join(self._buffer).split())
+        self._buffer = []
+        if text:
+            self.parts.append((tag, text[:500]))
+
+
+def pages_from_downloaded_html(html: str, url: str, out_dir: Path) -> dict:
+    """Extrai o texto do HTML já baixado quando o navegador não devolve a página."""
+    verdict = classify(signals_from_html(url, url, 200, html or ""))
+    if verdict.get("state") != "ACCESS_GRANTED":
+        return {"status": "blocked", "pages": [], "access": verdict, "final_url": url}
+    parser = _VisibleHtml()
+    parser.feed(html or "")
+    parser.close()
+    parts = parser.parts[:180]
+    if not parts:
+        return {"status": "empty", "pages": [], "final_url": url}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    width = 1100
+    line = 26
+    height = 48 + line * len(parts)
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    categories = {"h1": "title", "h2": "subtitle", "h3": "subtitle", "h4": "subtitle"}
+    blocks: list[Block] = []
+    top = 24
+    for tag, text in parts:
+        draw.text((36, top), text[:170], fill=(20, 20, 20))
+        x = 36 / width
+        y = top / height
+        box_w = 0.9
+        box_h = 18 / height
+        blocks.append(
+            Block(
+                text=text,
+                bbox=(x, y, box_w, box_h),
+                confidence=90.0,
+                source="html_text",
+                font_size=box_h,
+                category=categories.get(tag, "paragraph"),
+                level=1 if tag == "h1" else (2 if tag in {"h2", "h3", "h4"} else 0),
+                words=[WordBox(part, (x, y, box_w, box_h), 90.0) for part in text.split()],
+            )
+        )
+        top += line
+    path = out_dir / "capture-0001.png"
+    image.save(path, format="PNG")
+    return {
+        "status": "complete",
+        "pages": [
+            {
+                "sequence": 1,
+                "path": str(path),
+                "width": width,
+                "height": height,
+                "title": next((text for tag, text in parts if tag == "h1"), ""),
+                "blocks": blocks,
+                "blank": False,
+                "partial": False,
+                "reported_number": "",
+                "source_url": url,
+                "source": "html_text",
+            }
+        ],
+        "final_url": url,
+        "source": "html_text",
+    }
+
+
+def _blocks_from_dom(dom: dict | None, image_size: tuple[int, int]) -> list[Block]:
+    if not isinstance(dom, dict):
+        return []
     width = dom.get("width") or image_size[0] or 1
     height = dom.get("height") or image_size[1] or 1
     scale_x = image_size[0] / width if width else 1
@@ -311,7 +555,9 @@ def _blocks_from_dom(dom: dict, image_size: tuple[int, int]) -> list[Block]:
     }
     blocks: list[Block] = []
     for node in dom.get("nodes") or []:
-        text = " ".join((node.get("text") or "").split())
+        if not isinstance(node, dict):
+            continue
+        text = " ".join(str(node.get("text") or "").split())
         if not text:
             continue
         x = max(node.get("x") or 0, 0) * scale_x / image_size[0]

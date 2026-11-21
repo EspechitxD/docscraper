@@ -17,13 +17,13 @@ def partition_name(project_id: str, job_id: str) -> str:
     return f"persist:cpmh-{project_id}-{job_id}"
 
 
-def remember(session, job, document, verdict: dict, *, source: str) -> dict:
-    verdict = annotate(verdict)
+def remember(session, job, document, verdict: dict | None, *, source: str) -> dict:
+    verdict = annotate(verdict if isinstance(verdict, dict) else {})
     checkpoint = dict(job.checkpoint or {})
     access = dict(checkpoint.get("access") or {})
-    attempts = list(access.get("attempts") or [])
+    attempts = [item for item in list(access.get("attempts") or []) if isinstance(item, dict)]
     last = attempts[-1] if attempts else {}
-    same = last.get("state") == verdict["state"] and last.get("url") == (verdict.get("final_url") or verdict.get("url")) and last.get("source") == source
+    same = last.get("state") == verdict.get("state") and last.get("url") == (verdict.get("final_url") or verdict.get("url")) and last.get("source") == source
     duplicate = bool(same and job.state == "paused" and source == "capture")
     if not duplicate:
         attempts.append(
@@ -37,8 +37,8 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
                 "at": utcnow().isoformat(),
             }
         )
-    repeated = [item for item in attempts if item["state"] not in {"", "ACCESS_GRANTED"}]
-    persistent = len(repeated) >= 3 and verdict["state"] != "ACCESS_GRANTED"
+    repeated = [item for item in attempts if item.get("state") not in {"", "ACCESS_GRANTED"}]
+    persistent = len(repeated) >= 3 and verdict.get("state") != "ACCESS_GRANTED"
     cleared = verdict["state"] == "ACCESS_GRANTED" and source == "recheck"
     access.update(
         {
@@ -46,7 +46,7 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
             "provider": verdict.get("provider") or "none",
             "confidence": verdict.get("confidence") or 0,
             "evidence": list(verdict.get("evidence") or [])[:8],
-            "message": verdict.get("message") or "",
+            "message": verdict.get("message") or verdict.get("action") or "A captura foi pausada.",
             "url": (verdict.get("url") or "")[:500],
             "final_url": (verdict.get("final_url") or "")[:500],
             "cleared": cleared,
@@ -69,7 +69,7 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
         document.error_message = ""
     checkpoint["access"] = access
     job.checkpoint = checkpoint
-    if verdict["state"] != "ACCESS_GRANTED":
+    if verdict.get("state") != "ACCESS_GRANTED":
         job.state = "paused"
         job.stage = "capturing"
         job.error = access["message"][:500]

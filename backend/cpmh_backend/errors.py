@@ -26,7 +26,12 @@ class HttpAccess(UrlRejected):
 
 
 class AccessPaused(AppError):
-    def __init__(self, verdict: dict):
+    def __init__(self, verdict: dict | None):
+        if not isinstance(verdict, dict):
+            verdict = {
+                "state": "UNKNOWN_BLOCK",
+                "message": "A captura foi interrompida porque a resposta de acesso veio vazia.",
+            }
         super().__init__(verdict.get("message") or "Acesso pausado.", status_code=409, code="access_paused")
         self.verdict = verdict
 

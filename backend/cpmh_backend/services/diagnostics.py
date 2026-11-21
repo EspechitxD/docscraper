@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from cpmh_backend.config import Settings
 from cpmh_backend.db import database_quick_check
-from cpmh_backend.models import LogEntry
+from cpmh_backend.models import LogEntry, as_utc_iso
 from cpmh_backend.services.capture import browser_status
 from cpmh_backend.services.ocr import tesseract_status
 from cpmh_backend.services.translate import argos_available
@@ -36,7 +36,7 @@ def summary(session: Session, settings: Settings) -> dict:
         },
         "log_count": session.scalar(select(func.count()).select_from(LogEntry)) or 0,
         "recent_errors": [
-            {"id": item.id, "message": item.message, "category": item.category, "created_at": item.created_at.isoformat()}
+            {"id": item.id, "message": item.message, "category": item.category, "created_at": as_utc_iso(item.created_at)}
             for item in errors
         ],
         "windows_installer_tested": False,

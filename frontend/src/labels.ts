@@ -110,19 +110,48 @@ export function categoryLabel(value: string): string {
   return CATEGORIES.find((item) => item.id === value)?.label || value;
 }
 
+function asUtc(value: string): string {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(trimmed)) {
+    return `${trimmed.replace(" ", "T")}Z`;
+  }
+  return trimmed;
+}
+
 export function formatWhen(value: string | null | undefined): string {
   if (!value) {
     return "—";
   }
-  const date = new Date(value);
+  const date = new Date(asUtc(value));
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat("pt-BR", {
+  const formatted = new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
     timeStyle: "short",
     timeZone: "America/Sao_Paulo",
   }).format(date);
+  return `${formatted} (Brasília)`;
+}
+
+export function formatDuration(start: string, end: string): string {
+  const began = new Date(asUtc(start)).getTime();
+  const ended = new Date(asUtc(end)).getTime();
+  if (Number.isNaN(began) || Number.isNaN(ended) || ended < began) {
+    return "—";
+  }
+  const seconds = Math.round((ended - began) / 1000);
+  if (seconds < 60) {
+    return `${seconds} s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) {
+    return rest ? `${minutes} min ${rest} s` : `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remain = minutes % 60;
+  return remain ? `${hours} h ${remain} min` : `${hours} h`;
 }
 
 export function formatBytes(value: number | null | undefined): string {
