@@ -66,9 +66,25 @@ export async function apiDownload(path: string, init: RequestInit = {}): Promise
   if (!response.ok) {
     throw await parseError(response);
   }
-  const disposition = response.headers.get("content-disposition") || "";
-  const match = /filename="?([^";]+)"?/.exec(disposition);
-  return { blob: await response.blob(), filename: match?.[1] || "documento" };
+  const blob = await response.blob();
+  return { blob, filename: filenameFromDisposition(response.headers.get("content-disposition") || "", blob.type) };
+}
+
+function filenameFromDisposition(header: string, blobType: string): string {
+  const encoded = /filename\*=(?:UTF-8''|utf-8'')([^;]+)/i.exec(header);
+  if (encoded?.[1]) {
+    try {
+      return decodeURIComponent(encoded[1].trim().replace(/"/g, ""));
+    } catch {
+      return encoded[1].trim();
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const plain = /filename=([^;]+)/i.exec(header);
+  if (plain?.[1]) return plain[1].trim().replace(/^"|"$/g, "");
+  const ext = blobType.includes("pdf") ? "pdf" : blobType.includes("json") ? "json" : blobType.includes("zip") ? "zip" : blobType.startsWith("text/") ? "txt" : "docx";
+  return `documento.${ext}`;
 }
 
 export async function apiBlob(path: string): Promise<Blob> {

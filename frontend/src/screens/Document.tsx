@@ -747,14 +747,21 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
         }),
       });
       const url = URL.createObjectURL(downloaded.blob);
-      const anchor = document.createElement("a");
+      const anchor = window.document.createElement("a");
       anchor.href = url;
-      anchor.download = downloaded.filename;
+      anchor.download = downloaded.filename || "documento.docx";
+      anchor.rel = "noopener";
+      window.document.body.appendChild(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
-      await onDone();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      try {
+        await onDone();
+      } catch {
+        // O arquivo já foi entregue. Uma falha ao atualizar a lista não desfaz o download.
+      }
     } catch (cause) {
-      setError(isApiError(cause) ? cause.message : "O download falhou.");
+      setError(isApiError(cause) ? cause.message : cause instanceof Error && cause.message ? cause.message : "O download falhou.");
     } finally {
       setBusy(false);
     }
