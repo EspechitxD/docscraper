@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from cpmh_backend.errors import UrlRejected
@@ -16,7 +18,8 @@ from cpmh_backend.intelligence import (
     reading_order,
 )
 from cpmh_backend.errors import AppError
-from cpmh_backend.security import prepare_output_dir, validate_url
+from cpmh_backend.security import _inside, _path_is_forbidden, prepare_output_dir, validate_url
+from cpmh_backend.services.ocr import dehyphenate_text
 from cpmh_backend.services.translate import apply_glossary
 from cpmh_backend.models import GlossaryTerm
 from PIL import Image
@@ -38,6 +41,38 @@ def test_blank_export_folder_goes_to_documents(monkeypatch, tmp_path):
     destination = prepare_output_dir("", install_dir=tmp_path / "app")
     assert destination == (tmp_path / "casa" / "Documents" / "CPMH").resolve()
     assert destination.is_dir()
+
+
+def test_windows_downloads_folder_is_allowed(tmp_path):
+    downloads = r"C:\Users\joele\Downloads\saida"
+    install = r"C:\Users\joele\Documents\GitHub\docscraper"
+    assert _inside(str(install) + r"\saida", install)
+    assert not _inside(downloads, install)
+    assert not _inside(downloads, r"C:\Windows")
+    assert _inside(r"C:\Windows\Temp", r"C:\Windows")
+    assert not _path_is_forbidden(Path(downloads), tmp_path)
+
+
+def test_line_break_hyphen_is_joined():
+    assert dehyphenate_text("clean- ing process") == "cleaning process"
+    assert dehyphenate_text("F3127 - 16") == "F3127 - 16"
+
+
+def test_upside_down_page_is_turned_before_reading():
+    shutil = __import__("shutil")
+    if shutil.which("tesseract") is None:
+        pytest.skip("tesseract ausente")
+    from PIL import Image, ImageDraw, ImageFont
+
+    from cpmh_backend.services.ocr import recognize
+
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 64)
+    image = Image.new("RGB", (900, 240), "white")
+    ImageDraw.Draw(image).text((40, 70), "NORTH STAR", fill="black", font=font)
+    blocks, _prepared, notes = recognize(image.rotate(180), ["eng"])
+    text = " ".join(block.text for block in blocks)
+    assert notes["orientation"] == 180
+    assert "NORTH" in text and "STAR" in text
 
 
 def test_folder_inside_the_app_is_refused(tmp_path):

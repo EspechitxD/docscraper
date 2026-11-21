@@ -80,6 +80,9 @@ def export_document(
         translate_mode = normalize_translation_mode(translate_mode)
     except ValueError as exc:
         raise AppError("Modo de tradução desconhecido.") from exc
+    from cpmh_backend.services.pipeline import straighten_stored_pages
+
+    straighten_stored_pages(session, document)
     refresh_document_representation(session, document)
     destination = prepare_output_dir(output_dir, install_dir=settings.install_dir)
     base_name = safe_filename(output_name)
@@ -105,29 +108,34 @@ def export_document(
         select(RegionRevision).where(RegionRevision.document_id == document.id).order_by(RegionRevision.created_at)
     ).all()
     produced: list[tuple[str, Path]] = []
-    if "docx" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.docx", collision)
-        _write_docx(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
-        produced.append(("docx", path))
-    if "pdf" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.pdf", collision)
-        _write_pdf(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
-        produced.append(("pdf", path))
-    if "txt" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.txt", collision)
-        path.write_text(_plain_text(elements, translations, mode, translate_mode, images, tables), encoding="utf-8")
-        produced.append(("txt", path))
-    if "json" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.json", collision)
-        path.write_text(
-            json.dumps(
-                _json_payload(document, elements, pages, tables, images, formulas, translations, regions, revisions),
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        produced.append(("json", path))
+    try:
+        if "docx" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.docx", collision)
+            _write_docx(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
+            produced.append(("docx", path))
+        if "pdf" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.pdf", collision)
+            _write_pdf(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
+            produced.append(("pdf", path))
+        if "txt" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.txt", collision)
+            path.write_text(_plain_text(elements, translations, mode, translate_mode, images, tables), encoding="utf-8")
+            produced.append(("txt", path))
+        if "json" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.json", collision)
+            path.write_text(
+                json.dumps(
+                    _json_payload(document, elements, pages, tables, images, formulas, translations, regions, revisions),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            produced.append(("json", path))
+    except OSError as exc:
+        raise AppError(
+            f"Não consegui gravar em {destination}. {exc.strerror or 'O sistema recusou a gravação.'}"
+        ) from exc
     records = []
     for fmt, path in produced:
         record = ExportedFile(
@@ -143,35 +151,40 @@ def export_document(
         )
         session.add(record)
         records.append(record)
-    if "package" in formats:
-        package = resolve_output_path(destination, f"{stem}.zip", collision)
-        with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for _fmt, path in produced:
-                archive.write(path, arcname=path.name)
-            for image in images:
-                if image.path and Path(image.path).exists():
-                    archive.write(image.path, arcname=f"imagens/{Path(image.path).name}")
-            manifest = {
-                "document_id": document.id,
-                "title": document.title,
-                "mode": mode,
-                "files": [path.name for _fmt, path in produced],
-                "sha256": {path.name: sha256_file(path) for _fmt, path in produced},
-            }
-            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        record = ExportedFile(
-            id=_new_id(),
-            document_id=document.id,
-            job_id=job_id,
-            format="package",
-            path=str(package),
-            name=package.name,
-            created_at=utcnow(),
-            size=package.stat().st_size,
-            mode=mode,
-        )
-        session.add(record)
-        records.append(record)
+    try:
+        if "package" in formats:
+            package = resolve_output_path(destination, f"{stem}.zip", collision)
+            with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for _fmt, path in produced:
+                    archive.write(path, arcname=path.name)
+                for image in images:
+                    if image.path and Path(image.path).exists():
+                        archive.write(image.path, arcname=f"imagens/{Path(image.path).name}")
+                manifest = {
+                    "document_id": document.id,
+                    "title": document.title,
+                    "mode": mode,
+                    "files": [path.name for _fmt, path in produced],
+                    "sha256": {path.name: sha256_file(path) for _fmt, path in produced},
+                }
+                archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            record = ExportedFile(
+                id=_new_id(),
+                document_id=document.id,
+                job_id=job_id,
+                format="package",
+                path=str(package),
+                name=package.name,
+                created_at=utcnow(),
+                size=package.stat().st_size,
+                mode=mode,
+            )
+            session.add(record)
+            records.append(record)
+    except OSError as exc:
+        raise AppError(
+            f"Não consegui gravar em {destination}. {exc.strerror or 'O sistema recusou a gravação.'}"
+        ) from exc
     session.flush()
     return [
         {"id": item.id, "format": item.format, "path": item.path, "name": item.name, "size": item.size, "mode": item.mode}

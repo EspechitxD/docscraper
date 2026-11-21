@@ -695,13 +695,14 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
   const [translateMode, setTranslateMode] = useState("none");
   const [name, setName] = useState(document.title.replace(/\s+/g, "_") || "documento");
   const [directory, setDirectory] = useState("");
+  const directoryTouched = useRef(false);
   const [error, setError] = useState("");
   const [files, setFiles] = useState<{ name: string; path: string; format: string; size: number }[]>([]);
   const [collision, setCollision] = useState<ApiError | null>(null);
 
   useEffect(() => {
     api<{ values: { default_output_dir?: string; default_export_mode?: string; default_format?: string } }>("/preferences").then((payload) => {
-      if (payload.values.default_output_dir) setDirectory(payload.values.default_output_dir);
+      if (!directoryTouched.current && payload.values.default_output_dir) setDirectory(payload.values.default_output_dir);
       if (payload.values.default_export_mode) setMode(payload.values.default_export_mode);
       if (payload.values.default_format) setFormats([payload.values.default_format]);
     }).catch(() => undefined);
@@ -717,7 +718,10 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
   async function chooseDir() {
     if (!window.cpmh) return;
     const picked = await window.cpmh.pickDirectory();
-    if (picked) setDirectory(picked);
+    if (picked) {
+      directoryTouched.current = true;
+      setDirectory(picked);
+    }
   }
 
   async function exportNow(choice: string | null) {
@@ -776,7 +780,7 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
       </div>
       <Field label="Nome do arquivo"><input className="field" value={name} onChange={(event) => setName(event.target.value)} /></Field>
       <div className="row">
-        <input className="field grow" value={directory} placeholder="Em branco salva em Documentos/CPMH" onChange={(event) => setDirectory(event.target.value)} />
+        <input className="field grow" value={directory} placeholder="Em branco salva em Documentos/CPMH" onChange={(event) => { directoryTouched.current = true; setDirectory(event.target.value); }} />
         {hasDesktopBridge() && <Button kind="secondary" onClick={() => void chooseDir()}>Escolher pasta</Button>}
       </div>
       {!hasDesktopBridge() && <p className="lede">No aplicativo desktop, a pasta é escolhida pelo seletor do sistema. Aqui informe o caminho absoluto.</p>}

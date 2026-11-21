@@ -29,6 +29,7 @@ from cpmh_backend.models import (
     ImageAsset,
     OCRRegion,
     ProcessingJob,
+    RegionRevision,
     ProcessingStep,
     TableRecord,
     TranslationRecord,
@@ -172,8 +173,13 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     )
     resume = bool((job.checkpoint or {}).get("pages_done"))
     keep_review = existing_region is not None and not force and not resume
+    straightened = False
     if keep_review:
-        _step(session, job, "ocr", "skipped", "Revisão existente preservada. A captura não foi refeita.")
+        straightened = straighten_stored_pages(session, document, languages)
+        if straightened:
+            _step(session, job, "ocr", "done", "As páginas de cabeça para baixo foram lidas de novo.")
+        else:
+            _step(session, job, "ocr", "skipped", "Revisão existente preservada. A captura não foi refeita.")
     elif document.source_kind == "pdf":
         try:
             _persist_pdf(session, job, document, Path(local), languages, folder)
@@ -195,7 +201,7 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
         return
     if not _stage(session, job, document, "structuring", 70):
         return
-    if not keep_review:
+    if not keep_review or straightened:
         _rebuild_elements(session, document)
     _continue_tables(session, document)
     _detect_document_language(session, document)
@@ -534,6 +540,81 @@ def _image_page(path: Path, languages: list[str]) -> dict:
         "formulas": [],
         "images": [],
     }
+
+
+def straighten_stored_pages(session, document: Document, languages: list[str] | None = None) -> bool:
+    """Reler uma folha salva de cabeça para baixo e juntar palavras partidas por hífen."""
+    from cpmh_backend.services.ocr import dehyphenate_text, recognize
+
+    pages = session.scalars(select(DocumentPage).where(DocumentPage.document_id == document.id)).all()
+    revised = set(
+        session.scalars(select(RegionRevision.region_id).where(RegionRevision.document_id == document.id)).all()
+    )
+    changed = False
+    for page in pages:
+        regions = session.scalars(
+            select(OCRRegion).where(OCRRegion.page_id == page.id, OCRRegion.deleted.is_(False))
+        ).all()
+        if any(region.id in revised or (region.original_text and region.text != region.original_text) for region in regions):
+            continue
+        confidences = [float(region.confidence or 0) for region in regions if region.text]
+        mean = sum(confidences) / len(confidences) if confidences else 0
+        image_path = Path(page.image_path or "")
+        if mean < 75 and image_path.is_file():
+            image = Image.open(image_path)
+            _prepared, angle = _rotate_for_repair(image)
+            if angle:
+                blocks, prepared, _notes = recognize(image, languages)
+                classify_blocks(blocks)
+                session.execute(delete(OCRRegion).where(OCRRegion.page_id == page.id))
+                prepared.save(image_path, format="PNG")
+                page.width, page.height = prepared.size
+                page.sha256 = sha256_file(image_path)
+                for block in reading_order(blocks):
+                    session.add(
+                        OCRRegion(
+                            id=new_id(),
+                            page_id=page.id,
+                            document_id=document.id,
+                            category=block.category if block.category else "unknown",
+                            text=block.text,
+                            confidence=float(block.confidence or 0),
+                            x=block.bbox[0],
+                            y=block.bbox[1],
+                            w=block.bbox[2],
+                            h=block.bbox[3],
+                            language=block.language or detect_language(block.text),
+                            review_state="pending",
+                            original_text=block.text,
+                            original_category=block.category,
+                            original_x=block.bbox[0],
+                            original_y=block.bbox[1],
+                            original_w=block.bbox[2],
+                            original_h=block.bbox[3],
+                            source=block.source,
+                            evidence=block.notes or "",
+                            deleted=False,
+                            created_at=utcnow(),
+                            updated_at=utcnow(),
+                        )
+                    )
+                changed = True
+                continue
+        for region in regions:
+            cleaned = dehyphenate_text(region.text or "")
+            if cleaned == region.text:
+                continue
+            if not region.original_text or region.original_text == region.text:
+                region.original_text = cleaned
+            region.text = cleaned
+            changed = True
+    return changed
+
+
+def _rotate_for_repair(image: Image.Image) -> tuple[Image.Image, int]:
+    from cpmh_backend.services.ocr import _rotate_right_angles
+
+    return _rotate_right_angles(image)
 
 
 def _store_page(session, document, page: dict, folder: Path, source_url: str) -> None:
