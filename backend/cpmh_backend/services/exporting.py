@@ -35,7 +35,7 @@ from cpmh_backend.models import (
     TranslationRecord,
     utcnow,
 )
-from cpmh_backend.security import assert_output_dir_allowed, safe_filename
+from cpmh_backend.security import prepare_output_dir, safe_filename
 
 _FONT_READY = False
 
@@ -81,7 +81,7 @@ def export_document(
     except ValueError as exc:
         raise AppError("Modo de tradução desconhecido.") from exc
     refresh_document_representation(session, document)
-    destination = assert_output_dir_allowed(Path(output_dir), install_dir=settings.install_dir)
+    destination = prepare_output_dir(output_dir, install_dir=settings.install_dir)
     base_name = safe_filename(output_name)
     stem = Path(base_name).stem
     elements = session.scalars(

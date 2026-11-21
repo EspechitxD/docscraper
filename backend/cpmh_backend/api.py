@@ -1349,14 +1349,14 @@ def delete_image(image_id: str, confirm: bool = False, db: Session = Depends(get
 def export_images(document_id: str, payload: ImageExportIn, db: Session = Depends(get_db)):
     import shutil
 
-    from cpmh_backend.security import assert_output_dir_allowed
+    from cpmh_backend.security import prepare_output_dir
     from cpmh_backend.services.exporting import resolve_output_path
 
     document = db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
     try:
-        destination = assert_output_dir_allowed(Path(payload.output_dir), install_dir=get_settings().install_dir)
+        destination = prepare_output_dir(payload.output_dir, install_dir=get_settings().install_dir)
     except AppError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
     rows = db.scalars(select(ImageAsset).where(ImageAsset.document_id == document_id)).all()

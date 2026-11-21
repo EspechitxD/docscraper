@@ -15,7 +15,8 @@ from cpmh_backend.intelligence import (
     link_page_continuity,
     reading_order,
 )
-from cpmh_backend.security import validate_url
+from cpmh_backend.errors import AppError
+from cpmh_backend.security import prepare_output_dir, validate_url
 from cpmh_backend.services.translate import apply_glossary
 from cpmh_backend.models import GlossaryTerm
 from PIL import Image
@@ -30,6 +31,23 @@ def _resolver(mapping):
 
 
 PUBLIC = {"example.com": ["93.184.216.34"]}
+
+
+def test_blank_export_folder_goes_to_documents(monkeypatch, tmp_path):
+    monkeypatch.setattr("cpmh_backend.security.Path.home", lambda: tmp_path / "casa")
+    destination = prepare_output_dir("", install_dir=tmp_path / "app")
+    assert destination == (tmp_path / "casa" / "Documents" / "CPMH").resolve()
+    assert destination.is_dir()
+
+
+def test_folder_inside_the_app_is_refused(tmp_path):
+    install = tmp_path / "app"
+    install.mkdir()
+    with pytest.raises(AppError) as caught:
+        prepare_output_dir(str(install / "saida"), install_dir=install)
+    assert "Documentos" in str(caught.value) or "Documents" in str(caught.value)
+    with pytest.raises(AppError):
+        prepare_output_dir("/etc", install_dir=install)
 
 
 def test_rejects_private_and_obfuscated_targets():

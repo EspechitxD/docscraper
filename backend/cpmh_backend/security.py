@@ -9,6 +9,7 @@ de rede local, desligada por padrão.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 from collections.abc import Callable
@@ -191,17 +192,61 @@ def domain_of(url: str) -> str:
         return ""
 
 
+def user_output_dir(install_dir: Path | None = None) -> Path:
+    """Pasta de exportação fora do aplicativo e das pastas do sistema."""
+    home = Path.home()
+    for name in ("Documents", "Documentos", "Downloads"):
+        folder = home / name / "CPMH"
+        if not _path_is_forbidden(folder, install_dir):
+            return folder
+    return home / "CPMH"
+
+
+def prepare_output_dir(path: str | Path | None, *, install_dir: Path | None = None) -> Path:
+    text = str(path or "").strip()
+    if text:
+        return assert_output_dir_allowed(Path(text).expanduser(), install_dir=install_dir)
+    chosen = user_output_dir(install_dir)
+    if _path_is_forbidden(chosen, install_dir):
+        raise AppError(f"Não há uma pasta de destino segura. Crie uma pasta fora do aplicativo, por exemplo {chosen}.")
+    chosen.mkdir(parents=True, exist_ok=True)
+    return assert_output_dir_allowed(chosen, install_dir=install_dir)
+
+
+def _path_is_forbidden(path: Path, install_dir: Path | None) -> bool:
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError:
+        return True
+    for root in _forbidden_output_roots(install_dir):
+        if resolved == root or root in resolved.parents:
+            return True
+    return False
+
+
+def _forbidden_output_roots(install_dir: Path | None) -> list[Path]:
+    roots: list[Path] = []
+    if os.name == "nt":
+        windows = os.environ.get("SystemRoot", r"C:\Windows")
+        roots.extend([Path(windows), Path(r"C:\Windows"), Path(r"C:\Program Files"), Path(r"C:\Program Files (x86)")])
+    else:
+        roots.extend(
+            [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"), Path("/proc"), Path("/sys"), Path("/dev"), Path("/boot")]
+        )
+    if install_dir is not None:
+        roots.append(install_dir.expanduser().resolve())
+    return roots
+
+
 def assert_output_dir_allowed(path: Path, *, install_dir: Path | None = None) -> Path:
     try:
         resolved = path.expanduser().resolve()
     except OSError as exc:
         raise AppError("A pasta de destino é inválida.") from exc
-    forbidden_roots = [Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"), Path("/proc"), Path("/sys"), Path("/dev"), Path("/boot")]
-    if install_dir is not None:
-        forbidden_roots.append(install_dir.resolve())
-    for root in forbidden_roots:
-        if resolved == root or root in resolved.parents:
-            raise AppError("Essa pasta de destino não é permitida.")
+    if _path_is_forbidden(resolved, install_dir):
+        raise AppError(
+            f"Essa pasta fica dentro do aplicativo ou de uma pasta do sistema. Escolha outra, por exemplo {user_output_dir(install_dir)}."
+        )
     if not resolved.exists():
         if not resolved.parent.exists():
             raise AppError("A pasta pai do destino não existe.")

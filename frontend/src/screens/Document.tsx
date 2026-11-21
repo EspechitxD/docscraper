@@ -776,7 +776,7 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
       </div>
       <Field label="Nome do arquivo"><input className="field" value={name} onChange={(event) => setName(event.target.value)} /></Field>
       <div className="row">
-        <input className="field grow" value={directory} placeholder="Pasta de destino" onChange={(event) => setDirectory(event.target.value)} />
+        <input className="field grow" value={directory} placeholder="Em branco salva em Documentos/CPMH" onChange={(event) => setDirectory(event.target.value)} />
         {hasDesktopBridge() && <Button kind="secondary" onClick={() => void chooseDir()}>Escolher pasta</Button>}
       </div>
       {!hasDesktopBridge() && <p className="lede">No aplicativo desktop, a pasta é escolhida pelo seletor do sistema. Aqui informe o caminho absoluto.</p>}
