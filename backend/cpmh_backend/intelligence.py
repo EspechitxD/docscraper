@@ -326,15 +326,122 @@ def _order_body(body: list[Block]) -> list[Block]:
         else:
             groups[-1].append(value)
     substantial = [group for group in groups if len(group) >= 2]
-    if len(substantial) >= 2:
-        boundary = (max(substantial[0]) + min(substantial[1])) / 2
-        left = [block for block in body if (block.bbox[0] + block.bbox[2] / 2) < boundary]
-        right = [block for block in body if block not in left]
-        if left and right:
-            left.sort(key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
-            right.sort(key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
-            return left + right
-    return sorted(body, key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
+    if len(substantial) < 2:
+        return sorted(body, key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
+    centers = [statistics.fmean(group) for group in substantial]
+    boundaries = [0.0]
+    for left, right in zip(centers, centers[1:]):
+        boundaries.append((left + right) / 2)
+    boundaries.append(1.01)
+    columns: list[list[Block]] = [[] for _ in range(len(boundaries) - 1)]
+    for block in body:
+        anchor = block.bbox[0]
+        index = len(boundaries) - 2
+        for position, edge in enumerate(boundaries[1:]):
+            if anchor < edge:
+                index = position
+                break
+        columns[index].append(block)
+    ordered: list[Block] = []
+    for column in columns:
+        column.sort(key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
+        ordered.extend(column)
+    return ordered
+
+
+@dataclass
+class TextGrid:
+    rows: list[list[str]]
+    bbox: tuple[float, float, float, float]
+    confidence: float
+    consumed: set[int]
+
+
+def grid_from_blocks(blocks: list[Block]) -> TextGrid | None:
+    """Monta uma grelha quando a página tem três colunas estreitas alinhadas.
+
+    Texto corrido em duas colunas largas continua na ordem da coluna.
+    """
+    body = [
+        block
+        for block in blocks
+        if block.category not in {"header", "footer", "page_number"}
+        and block.text.strip()
+        and 0.055 < block.bbox[1] < 0.93
+    ]
+    if len(body) < 8:
+        return None
+    centers = _cluster_values([block.bbox[0] for block in body], gap=0.16)
+    columns: list[tuple[float, list[Block]]] = []
+    for center in centers:
+        members = [block for block in body if abs(block.bbox[0] - center) <= 0.12]
+        if len(members) >= 4:
+            columns.append((center, members))
+    if len(columns) < 3:
+        return None
+    widths = [block.bbox[2] for block in body if block.bbox[2] > 0]
+    if not widths or statistics.median(widths) > 0.30:
+        return None
+    first = columns[0][1]
+    aligned = 0
+    for block in first:
+        if all(
+            any(abs(block.bbox[1] - other.bbox[1]) <= 0.014 for other in members)
+            for _center, members in columns[1:]
+        ):
+            aligned += 1
+    if aligned < max(3, int(len(first) * 0.4)):
+        return None
+    starts: list[float] = []
+    for block in sorted(first, key=lambda item: item.bbox[1]):
+        shares = any(
+            abs(block.bbox[1] - other.bbox[1]) <= 0.014
+            for _center, members in columns[1:]
+            for other in members
+        )
+        if shares and (not starts or block.bbox[1] - starts[-1] > 0.012):
+            starts.append(block.bbox[1])
+    if len(starts) < 3:
+        return None
+    edges = [center for center, _members in columns]
+    bounds = [0.0]
+    for left, right in zip(edges, edges[1:]):
+        bounds.append((left + right) / 2)
+    bounds.append(1.0)
+    rows = [[""] * (len(bounds) - 1) for _ in starts]
+    consumed: set[int] = set()
+    for block in sorted(body, key=lambda item: (item.bbox[1], item.bbox[0])):
+        if block.bbox[1] + 0.008 < starts[0]:
+            continue
+        row_index = 0
+        for index, start in enumerate(starts):
+            if block.bbox[1] + 0.008 >= start:
+                row_index = index
+        center = block.bbox[0] + block.bbox[2] / 2
+        column = len(bounds) - 2
+        for position, edge in enumerate(bounds[1:]):
+            if center <= edge:
+                column = position
+                break
+        text = " ".join(block.text.split())
+        current = rows[row_index][column]
+        rows[row_index][column] = f"{current} {text}".strip() if current else text
+        consumed.add(id(block))
+    rows = [row for row in rows if any(cell.strip() for cell in row)]
+    if len(rows) < 3 or not consumed:
+        return None
+    used = [block for block in body if id(block) in consumed]
+    x = min(block.bbox[0] for block in used)
+    y = min(block.bbox[1] for block in used)
+    right = max(block.bbox[0] + block.bbox[2] for block in used)
+    bottom = max(block.bbox[1] + block.bbox[3] for block in used)
+    confidence = statistics.fmean(block.confidence or 0 for block in used)
+    return TextGrid(
+        rows=rows,
+        bbox=(x, y, max(right - x, 0.01), max(bottom - y, 0.01)),
+        confidence=round(confidence, 2),
+        consumed=consumed,
+    )
 
 
 def lines_from_words(words: list[WordBox]) -> list[list[WordBox]]:

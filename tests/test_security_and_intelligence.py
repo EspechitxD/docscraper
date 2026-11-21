@@ -14,12 +14,13 @@ from cpmh_backend.intelligence import (
     decide_capture,
     detect_language,
     detect_text_table,
+    grid_from_blocks,
     link_page_continuity,
     reading_order,
 )
 from cpmh_backend.errors import AppError
 from cpmh_backend.security import _inside, _path_is_forbidden, prepare_output_dir, validate_url
-from cpmh_backend.services.ocr import dehyphenate_text
+from cpmh_backend.services.ocr import dehyphenate_text, polish_ocr_text
 from cpmh_backend.services.translate import apply_glossary
 from cpmh_backend.models import GlossaryTerm
 from PIL import Image
@@ -56,6 +57,8 @@ def test_windows_downloads_folder_is_allowed(tmp_path):
 def test_line_break_hyphen_is_joined():
     assert dehyphenate_text("clean- ing process") == "cleaning process"
     assert dehyphenate_text("F3127 - 16") == "F3127 - 16"
+    assert polish_ocr_text("valor , 2 ( mm )") == "valor, 2 (mm)"
+    assert polish_ocr_text("clean- ing") == "cleaning"
 
 
 def test_upside_down_page_is_turned_before_reading():
@@ -183,6 +186,19 @@ def test_table_and_formula_and_glossary():
     assert table["rows"][0][0] == "Código"
     assert table["rows"][1][1] == "Placa"
     assert table["reliable"] is True
+    grid = _checklist_blocks()
+    built = grid_from_blocks(grid)
+    assert built is not None
+    assert built.rows[0] == ["Item", "Sim", "Não"]
+    assert built.rows[1][0] == "Parafuso curto de fixação"
+    assert built.rows[2][1] == "Conferido"
+    wide = [
+        Block("COLUNA_ESQUERDA_A", (0.08, 0.2, 0.35, 0.04)),
+        Block("COLUNA_ESQUERDA_B", (0.08, 0.3, 0.35, 0.04)),
+        Block("COLUNA_DIREITA_A", (0.58, 0.2, 0.35, 0.04)),
+        Block("COLUNA_DIREITA_B", (0.58, 0.3, 0.35, 0.04)),
+    ]
+    assert grid_from_blocks(wide) is None
     reliable, _note = assess_formula("E = mc²")
     assert reliable is True
     complex_ok, note = assess_formula("∫ x² dx")
@@ -196,3 +212,67 @@ def test_table_and_formula_and_glossary():
     assert "placa" in translated
     assert "Ti6Al4V" in translated
     assert "2,0 mm" in translated
+
+
+def _checklist_blocks():
+    blocks = []
+    for column, text in enumerate(["Item", "Sim", "Não"]):
+        blocks.append(Block(text, (0.08 + column * 0.28, 0.12, 0.16, 0.02)))
+    rows = [
+        ("Parafuso curto", "Conferido", "Trocar"),
+        ("Placa reta", "Conferido", "Ajustar"),
+        ("Arruela", "Conferido", "Repor"),
+        ("Guia", "Conferido", "Recalibrar"),
+    ]
+    y = 0.18
+    for left, middle, right in rows:
+        blocks.append(Block(left, (0.08, y, 0.16, 0.02)))
+        blocks.append(Block(middle, (0.36, y, 0.16, 0.02)))
+        blocks.append(Block(right, (0.64, y, 0.16, 0.02)))
+        y += 0.06
+    blocks.append(Block("de fixação", (0.08, 0.20, 0.16, 0.018)))
+    return blocks
+
+
+def test_exported_document_uses_cpmh_colors(tmp_path):
+    import zipfile
+    from types import SimpleNamespace
+
+    from cpmh_backend.services.exporting import _write_docx, _write_pdf
+
+    element = SimpleNamespace(
+        kind="title",
+        level=1,
+        text="Manual de ancoragem",
+        skip_export=False,
+        id="e1",
+        page_ids=["p"],
+        metadata_json={"y": 0.04},
+    )
+    page = SimpleNamespace(id="p", sequence=1, image_path="")
+    table = SimpleNamespace(
+        page_sequence=1,
+        rows=[["Item", "Medida"], ["Placa", "30 mm"]],
+        reliable=True,
+        review_state="pending",
+        image_path="",
+        y=0.2,
+    )
+    docx_path = tmp_path / "saida.docx"
+    pdf_path = tmp_path / "saida.pdf"
+    document = SimpleNamespace(title="Manual de ancoragem")
+    _write_docx(docx_path, document, [element], [page], [table], [], [], [], "editable", "none")
+    _write_pdf(pdf_path, document, [element], [page], [table], [], [], [], "editable", "none")
+    package = zipfile.ZipFile(docx_path)
+    xml = "\n".join(
+        package.read(name).decode("utf-8")
+        for name in package.namelist()
+        if name.startswith("word/") and name.endswith(".xml")
+    )
+    assert "FF5000" in xml
+    assert "29282A" in xml
+    assert "Placa" in xml
+    assert "CPMH" in xml
+    pdf = pdf_path.read_bytes()
+    assert pdf.startswith(b"%PDF")
+    assert b"Manual de ancoragem" in pdf

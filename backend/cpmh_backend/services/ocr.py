@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import unicodedata
 
 from PIL import Image
 
@@ -50,6 +51,21 @@ def dehyphenate_text(text: str) -> str:
         previous = current
         current = _HYPHEN_BREAK.sub(r"\1\2", current)
     return current
+
+
+_SPACE_BEFORE = re.compile(r"[ \t]+([,.;:!?%)\]])")
+_SPACE_AFTER = re.compile(r"([(\[])[ \t]+")
+_MULTI_SPACE = re.compile(r"[ \t]{2,}")
+
+
+def polish_ocr_text(text: str) -> str:
+    """Limpa a leitura sem trocar letras: hífen de fim de linha, espaços e pontuação."""
+    current = unicodedata.normalize("NFKC", (text or "").replace("\u00ad", ""))
+    current = dehyphenate_text(current)
+    current = _SPACE_BEFORE.sub(r"\1", current)
+    current = _SPACE_AFTER.sub(r"\1", current)
+    current = _MULTI_SPACE.sub(" ", current)
+    return current.strip()
 
 
 def _read_osd(image: Image.Image) -> tuple[int, float]:

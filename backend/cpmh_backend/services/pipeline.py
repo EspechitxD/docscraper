@@ -18,7 +18,15 @@ from cpmh_backend.db import preference_value, session_scope
 from cpmh_backend.errors import AccessPaused, AppError, CollisionError, UrlRejected
 from cpmh_backend.recovery import declared_pdf, managed_fetch, timeout_for
 from cpmh_backend.hashing import dhash, sha256_bytes, sha256_file
-from cpmh_backend.intelligence import Block, FlowPiece, classify_blocks, detect_language, link_page_continuity, reading_order
+from cpmh_backend.intelligence import (
+    Block,
+    FlowPiece,
+    classify_blocks,
+    detect_language,
+    grid_from_blocks,
+    link_page_continuity,
+    reading_order,
+)
 from cpmh_backend.models import (
     Capture,
     Document,
@@ -544,7 +552,7 @@ def _image_page(path: Path, languages: list[str]) -> dict:
 
 def straighten_stored_pages(session, document: Document, languages: list[str] | None = None) -> bool:
     """Reler uma folha salva de cabeça para baixo e juntar palavras partidas por hífen."""
-    from cpmh_backend.services.ocr import dehyphenate_text, recognize
+    from cpmh_backend.services.ocr import polish_ocr_text, recognize
 
     pages = session.scalars(select(DocumentPage).where(DocumentPage.document_id == document.id)).all()
     revised = set(
@@ -560,9 +568,13 @@ def straighten_stored_pages(session, document: Document, languages: list[str] | 
         confidences = [float(region.confidence or 0) for region in regions if region.text]
         mean = sum(confidences) / len(confidences) if confidences else 0
         image_path = Path(page.image_path or "")
-        if mean < 75 and image_path.is_file():
+        meta = dict(page.metadata_json or {})
+        if mean < 75 and image_path.is_file() and not meta.get("orientation_checked"):
             image = Image.open(image_path)
             _prepared, angle = _rotate_for_repair(image)
+            meta["orientation_checked"] = True
+            page.metadata_json = meta
+            changed = True
             if angle:
                 blocks, prepared, _notes = recognize(image, languages)
                 classify_blocks(blocks)
@@ -601,7 +613,7 @@ def straighten_stored_pages(session, document: Document, languages: list[str] | 
                 changed = True
                 continue
         for region in regions:
-            cleaned = dehyphenate_text(region.text or "")
+            cleaned = polish_ocr_text(region.text or "")
             if cleaned == region.text:
                 continue
             if not region.original_text or region.original_text == region.text:
@@ -773,6 +785,48 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
         )
 
 
+def _export_text(region) -> str:
+    from cpmh_backend.services.ocr import polish_ocr_text
+
+    text = region.text or ""
+    if region.original_text and region.text != region.original_text:
+        return text
+    return polish_ocr_text(text)
+
+
+def _replace_page_grid(session, document: Document, page: DocumentPage, blocks: list[Block], by_identity: dict[int, object]) -> set[str]:
+    """Troca parágrafos embaralhados de uma grelha por uma tabela, se a página for uma."""
+    grid = grid_from_blocks(blocks)
+    existing = session.scalars(
+        select(TableRecord).where(TableRecord.document_id == document.id, TableRecord.page_sequence == page.sequence)
+    ).all()
+    if grid is None:
+        return set()
+    if any(item.review_state == "reviewed" for item in existing):
+        return set()
+    for item in existing:
+        session.delete(item)
+    session.add(
+        TableRecord(
+            id=new_id(),
+            document_id=document.id,
+            page_ids=[page.id],
+            rows=grid.rows,
+            confidence=grid.confidence,
+            image_path="",
+            review_state="pending",
+            reliable=True,
+            notes="Grelha de colunas alinhadas.",
+            x=grid.bbox[0],
+            y=grid.bbox[1],
+            w=grid.bbox[2],
+            h=grid.bbox[3],
+            page_sequence=page.sequence,
+        )
+    )
+    return {by_identity[identity].id for identity in grid.consumed if identity in by_identity}
+
+
 def _rebuild_elements(session, document: Document) -> None:
     session.execute(delete(DocumentElement).where(DocumentElement.document_id == document.id))
     pages = session.scalars(
@@ -788,7 +842,7 @@ def _rebuild_elements(session, document: Document) -> None:
         by_identity: dict[int, OCRRegion] = {}
         for region in regions:
             block = Block(
-                text=region.text,
+                text=_export_text(region),
                 bbox=(region.x, region.y, region.w, region.h),
                 confidence=region.confidence,
                 category=region.category or "paragraph",
@@ -796,20 +850,24 @@ def _rebuild_elements(session, document: Document) -> None:
             )
             blocks.append(block)
             by_identity[id(block)] = region
+        consumed = _replace_page_grid(session, document, page, blocks, by_identity)
         for block in reading_order(blocks):
             region = by_identity[id(block)]
+            if region.id in consumed:
+                continue
             element_id = new_id()
+            shown = _export_text(region)
             element = DocumentElement(
                 id=element_id,
                 document_id=document.id,
                 kind=region.category or "paragraph",
                 order_index=order,
-                text=region.text,
+                text=shown,
                 confidence=region.confidence,
                 level=1 if region.category == "title" else (2 if region.category == "subtitle" else 0),
                 page_ids=[page.id],
                 region_ids=[region.id],
-                metadata_json={"page_sequence": page.sequence, "evidence": region.evidence or ""},
+                metadata_json={"page_sequence": page.sequence, "evidence": region.evidence or "", "y": region.y},
                 skip_export=False,
             )
             session.add(element)
@@ -818,7 +876,7 @@ def _rebuild_elements(session, document: Document) -> None:
                     FlowPiece(
                         id=element_id,
                         kind=region.category,
-                        text=region.text,
+                        text=shown,
                         page_index=page.sequence,
                         bbox=(region.x, region.y, region.w, region.h),
                     )
