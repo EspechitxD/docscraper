@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import logging
+import re
 import secrets
 import uuid
 from pathlib import Path
@@ -38,10 +39,13 @@ from cpmh_backend.models import (
     TableRecord,
     TranslationRecord,
     UserPreference,
+    as_utc_iso,
     utcnow,
 )
 from cpmh_backend.security import domain_of, normalize_url, safe_filename, validate_import_bytes, validate_url
 from cpmh_backend.services.diagnostics import summary
+from cpmh_backend.services.document_recovery import diagnose_url
+from cpmh_backend.services.document_report import build_document_report
 from cpmh_backend.services.glossary import export_terms_csv, import_terms
 from cpmh_backend.services.ocr import recognize
 from cpmh_backend.services.pipeline import new_id
@@ -138,7 +142,7 @@ class ExportIn(BaseModel):
     formats: list[str]
     mode: str = "editable"
     output_name: str
-    output_dir: str
+    output_dir: str = ""
     collision: str | None = None
     translate_mode: str = "none"
 
@@ -212,7 +216,7 @@ class ImageExportIn(BaseModel):
 
 
 def _dt(value):
-    return value.isoformat() if value else None
+    return as_utc_iso(value)
 
 
 def project_out(item: Project, db: Session) -> dict:
@@ -342,6 +346,23 @@ def _prefs(db: Session) -> dict:
     return {key: preference_value(db, key) for key in DEFAULT_PREFERENCES}
 
 
+def _domain_timeouts(value) -> dict:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": "Os timeouts por domínio precisam ser um mapa de host para segundos."})
+    cleaned = {}
+    if len(value) > 20:
+        raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": "Use no máximo 20 domínios."})
+    for host, seconds in value.items():
+        name = str(host).strip().lower()
+        if not re.fullmatch(r"[a-z0-9.-]{1,253}", name) or name.startswith(".") or ".." in name:
+            raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": f"Domínio inválido: {host}"})
+        try:
+            cleaned[name] = max(3, min(int(float(seconds)), 120))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail={"code": "domain_timeouts", "message": f"Timeout inválido para {name}."}) from exc
+    return cleaned
+
+
 def _network_allowed(db: Session) -> bool:
     return bool(get_settings().allow_local_network or preference_value(db, "allow_local_network"))
 
@@ -394,6 +415,27 @@ def diagnostics_backup(db: Session = Depends(get_db)):
     return {"path": path}
 
 
+@router.post("/diagnostics/web-document", dependencies=[Depends(require_token)])
+def diagnostics_web_document(payload: UrlIn, db: Session = Depends(get_db)):
+    """Diagnóstico de uma página web: tipo de visualizador, fontes documentais e restrições."""
+    try:
+        validate_url(payload.url, allow_local=_network_allowed(db))
+    except UrlRejected as exc:
+        raise_app(exc)
+    report = diagnose_url(payload.url)
+    audit(db, "diagnostics", "Diagnóstico de documento web.", {"state": report.get("primary_state"), "host": domain_of(payload.url)})
+    return report
+
+
+@router.get("/documents/{document_id}/report", dependencies=[Depends(require_token)])
+def document_report(document_id: str, db: Session = Depends(get_db)):
+    """Páginas, caracteres e qualidade da extração, calculados do que foi realmente guardado."""
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(404, "Documento não encontrado.")
+    return build_document_report(db, document)
+
+
 @router.post("/security/validate-url", dependencies=[Depends(require_token)])
 def validate_url_route(payload: UrlIn, db: Session = Depends(get_db)):
     try:
@@ -431,6 +473,10 @@ def put_preferences(payload: PreferencesIn, db: Session = Depends(get_db)):
             value = max(1, min(int(value), 500))
         if key == "max_download_mb":
             value = max(1, min(int(value), 200))
+        if key == "domain_concurrency":
+            value = max(1, min(int(value), 4))
+        if key == "domain_timeouts":
+            value = _domain_timeouts(value)
         if key in {"confidence_high", "confidence_medium"}:
             value = max(0, min(float(value), 100))
         set_preference(db, key, value)
@@ -914,6 +960,64 @@ def close_access_session(job_id: str, db: Session = Depends(get_db)):
     return {"partition": access.get("partition") or "", "closed": True}
 
 
+@router.post("/jobs/{job_id}/access/alternative", dependencies=[Depends(require_token)])
+def use_public_alternative(job_id: str, db: Session = Depends(get_db)):
+    item = _job(db, job_id)
+    document = db.get(Document, item.document_id)
+    access = dict((item.checkpoint or {}).get("access") or {})
+    alternative = access.get("alternative") or {}
+    target = str(alternative.get("url") or "")
+    if document is None or alternative.get("kind") != "public_pdf" or not target:
+        raise HTTPException(status_code=409, detail={"code": "no_alternative", "message": "Não há um PDF público indicado pela própria página."})
+    from cpmh_backend.access_flow import remember
+    from cpmh_backend.errors import AccessPaused
+    from cpmh_backend.hashing import sha256_bytes
+    from cpmh_backend.paths import document_dir
+    from cpmh_backend.recovery import managed_fetch, timeout_for
+    from urllib.parse import urlsplit
+
+    settings = get_settings()
+    host = urlsplit(target).hostname or ""
+    configured = preference_value(db, "domain_timeouts") or {}
+    timeout = timeout_for(host, float(preference_value(db, "timeout_seconds") or 30), configured if isinstance(configured, dict) else {})
+    limit = int(preference_value(db, "domain_concurrency") or 2)
+    max_bytes = int(preference_value(db, "max_download_mb") or 80) * 1024 * 1024
+    try:
+        result, _cached = managed_fetch(
+            target,
+            allow_local=_network_allowed(db),
+            max_bytes=max_bytes,
+            timeout=timeout,
+            domain_limit=limit,
+        )
+    except AccessPaused as exc:
+        remember(db, item, document, exc.verdict, source="alternative")
+        raise HTTPException(status_code=409, detail={"code": "access_blocked", "message": exc.verdict.get("message")}) from exc
+    if result.kind != "pdf":
+        raise HTTPException(status_code=409, detail={"code": "not_pdf", "message": "O endereço público não devolveu um PDF. Nada foi extraído."})
+    folder = document_dir(settings, document.project_id, document.id)
+    destination = folder / "original" / "source.pdf"
+    destination.write_bytes(result.data)
+    document.local_path = str(destination)
+    document.source_kind = "pdf"
+    document.content_sha256 = sha256_bytes(result.data)
+    document.error_message = ""
+    verdict = {
+        "state": "ACCESS_GRANTED",
+        "provider": "none",
+        "confidence": 0.9,
+        "url": target,
+        "final_url": result.final_url,
+        "evidence": ["PDF público indicado pela própria página"],
+        "message": "O PDF público indicado pela página foi salvo. A retomada usa esse arquivo e não volta ao endereço bloqueado.",
+        "http_status": 200,
+        "alternative": alternative,
+    }
+    remember(db, item, document, verdict, source="recheck")
+    audit(db, "access", "PDF público indicado pela página foi salvo.", {"job_id": item.id, "domain": host})
+    return {"access": (item.checkpoint or {}).get("access") or {}, "source_kind": document.source_kind}
+
+
 @router.post("/jobs/{job_id}/resume", dependencies=[Depends(require_token)])
 def resume_job(job_id: str, request: Request, db: Session = Depends(get_db)):
     item = _job(db, job_id)
@@ -1268,14 +1372,14 @@ def delete_image(image_id: str, confirm: bool = False, db: Session = Depends(get
 def export_images(document_id: str, payload: ImageExportIn, db: Session = Depends(get_db)):
     import shutil
 
-    from cpmh_backend.security import assert_output_dir_allowed
+    from cpmh_backend.security import prepare_output_dir
     from cpmh_backend.services.exporting import resolve_output_path
 
     document = db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
     try:
-        destination = assert_output_dir_allowed(Path(payload.output_dir), install_dir=get_settings().install_dir)
+        destination = prepare_output_dir(payload.output_dir, install_dir=get_settings().install_dir)
     except AppError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
     rows = db.scalars(select(ImageAsset).where(ImageAsset.document_id == document_id)).all()
@@ -1415,6 +1519,50 @@ def export_route(document_id: str, payload: ExportIn, db: Session = Depends(get_
         raise_app(exc)
     audit(db, "export", "Documento exportado.", {"id": item.id, "formats": payload.formats})
     return {"files": files}
+
+
+_DOWNLOAD_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+    "txt": "text/plain; charset=utf-8",
+    "json": "application/json",
+    "package": "application/zip",
+}
+
+
+@router.post("/documents/{document_id}/export/download", dependencies=[Depends(require_token)])
+def export_download(document_id: str, payload: ExportIn, db: Session = Depends(get_db)):
+    """Gera o arquivo na pasta de dados do aplicativo e devolve o download."""
+    item = db.get(Document, document_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
+    from cpmh_backend.services.exporting import export_document
+
+    settings = get_settings()
+    folder = settings.data_dir / "exports"
+    folder.mkdir(parents=True, exist_ok=True)
+    formats = list(payload.formats)
+    if len(formats) > 1 and "package" not in formats:
+        formats.append("package")
+    try:
+        files = export_document(
+            db,
+            item,
+            settings,
+            formats=formats,
+            mode=payload.mode,
+            output_name=payload.output_name,
+            output_dir=str(folder),
+            collision="version",
+            translate_mode=payload.translate_mode,
+        )
+    except AppError as exc:
+        raise_app(exc)
+    chosen = next((row for row in files if row["format"] == "package"), None) if len(formats) > 1 else files[0]
+    if chosen is None:
+        chosen = files[0]
+    audit(db, "export", "Documento baixado.", {"id": item.id, "formats": formats})
+    return FileResponse(chosen["path"], filename=chosen["name"], media_type=_DOWNLOAD_TYPES.get(chosen["format"], "application/octet-stream"))
 
 
 @router.get("/documents/{document_id}/exports", dependencies=[Depends(require_token)])

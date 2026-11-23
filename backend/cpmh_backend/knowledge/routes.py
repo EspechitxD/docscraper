@@ -31,7 +31,7 @@ from cpmh_backend.models import (
     KnowledgeRelation,
     utcnow,
 )
-from cpmh_backend.security import assert_output_dir_allowed, safe_filename
+from cpmh_backend.security import prepare_output_dir, safe_filename
 from cpmh_backend.services.fetch import fetch_url
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -273,7 +273,7 @@ def report_route(payload: ReportIn, db: Session = Depends(get_db)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail={"code": "question", "message": str(exc)}) from exc
     try:
-        folder = assert_output_dir_allowed(Path(payload.output_dir), install_dir=get_settings().install_dir)
+        folder = prepare_output_dir(payload.output_dir, install_dir=get_settings().install_dir)
     except AppError as exc:
         raise HTTPException(status_code=400, detail={"code": "output_dir", "message": str(exc)}) from exc
     path = folder / f"{safe_filename(payload.output_name)}.docx"

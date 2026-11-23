@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, isApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { formatWhen, stateLabel } from "../labels";
+import { isActiveState, nextStep, stateLabel } from "../labels";
 import type { DocumentItem, Project } from "../types";
 
 type GlossaryRow = { id: string; name: string };
@@ -15,7 +15,6 @@ export function ProjectScreen() {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [bulk, setBulk] = useState("");
-  const [priority, setPriority] = useState(0);
   const [query, setQuery] = useState("");
   const [state, setState] = useState("");
   const [error, setError] = useState("");
@@ -40,15 +39,35 @@ export function ProjectScreen() {
     load().catch((cause) => setError(isApiError(cause) ? cause.message : "Projeto indisponível."));
   }, [projectId]);
 
+  useEffect(() => {
+    if (!documents.some((item) => isActiveState(item.state))) return undefined;
+    const timer = window.setInterval(() => {
+      load().catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [documents, projectId]);
+
+  async function extract(documentId: string) {
+    await api(`/documents/${documentId}/jobs`, {
+      method: "POST",
+      body: JSON.stringify({ translate_mode: "none", export_formats: [] }),
+    });
+  }
+
   async function addUrl() {
     setError("");
     setInfo("");
     try {
       const result = await api<{ result: string; document: DocumentItem }>(`/projects/${projectId}/documents`, {
         method: "POST",
-        body: JSON.stringify({ url, priority }),
+        body: JSON.stringify({ url, priority: 0 }),
       });
-      setInfo(result.result === "duplicate" ? "Esse endereço já está no projeto." : "Documento adicionado.");
+      if (result.result === "duplicate") {
+        setInfo("Esse endereço já está no projeto. Use Extrair na linha dele se ainda for rascunho.");
+      } else {
+        await extract(result.document.id);
+        setInfo("Extração iniciada. Quando o estado mudar para aguardando revisão, abra Knowledge AI e pergunte sobre o documento.");
+      }
       setUrl("");
       await load();
     } catch (cause) {
@@ -64,7 +83,11 @@ export function ProjectScreen() {
         `/projects/${projectId}/documents/import`,
         { method: "POST", body: JSON.stringify({ text: bulk }) },
       );
-      setInfo(`${result.added.length} adicionados, ${result.duplicates.length} duplicados, ${result.rejected.length} recusados.`);
+      for (const item of result.added) {
+        const id = (item as { id?: string }).id;
+        if (id) await extract(id);
+      }
+      setInfo(`${result.added.length} em extração, ${result.duplicates.length} duplicados, ${result.rejected.length} recusados.`);
       setBulk("");
       await load();
     } catch (cause) {
@@ -77,8 +100,10 @@ export function ProjectScreen() {
     const body = new FormData();
     body.append("file", file);
     try {
-      await api(`/projects/${projectId}/documents/file`, { method: "POST", body });
-      setInfo(`Arquivo “${file.name}” importado.`);
+      const saved = await api<{ id?: string; added?: { id: string }[] }>(`/projects/${projectId}/documents/file`, { method: "POST", body });
+      if (saved.id) await extract(saved.id);
+      for (const item of saved.added || []) await extract(item.id);
+      setInfo(`Arquivo “${file.name}” em extração.`);
       await load();
     } catch (cause) {
       setError(isApiError(cause) ? cause.message : "Arquivo recusado.");
@@ -134,11 +159,11 @@ export function ProjectScreen() {
       {info && <Notice>{info}</Notice>}
       <div className="layout">
         <section className="panel stack">
-          <h2>Entrada de documentos</h2>
+          <h2>Enviar link</h2>
+          <p className="lede">Cole o endereço do PDF ou do documento. A extração começa sozinha. Para perguntar o que foi aprendido, use Knowledge AI no menu à esquerda.</p>
           <div className="row">
             <input className="field grow" value={url} placeholder="https://…" onChange={(event) => setUrl(event.target.value)} />
-            <input className="field" style={{ width: 90 }} type="number" min={0} max={100} value={priority} onChange={(event) => setPriority(Number(event.target.value))} />
-            <Button onClick={() => void addUrl()}>Adicionar</Button>
+            <Button onClick={() => void addUrl()}>Extrair</Button>
           </div>
           <Field label="Várias URLs, TXT ou CSV colado">
             <textarea className="area" value={bulk} onChange={(event) => setBulk(event.target.value)} placeholder={"https://exemplo/a.pdf\nhttps://exemplo/b.pdf"} />
@@ -190,19 +215,27 @@ export function ProjectScreen() {
         <div className="table-wrap">
           <table>
             <thead>
-              <tr><th>Título</th><th>Origem</th><th>Idioma</th><th>Páginas</th><th>Progresso</th><th>Estado</th><th>Inclusão</th><th></th></tr>
+              <tr><th>Documento</th><th>Andamento</th><th></th></tr>
             </thead>
             <tbody>
               {documents.map((item) => (
                 <tr key={item.id}>
-                  <td><Link to={`/documents/${item.id}`}>{item.title}</Link>{item.error_message && <div className="badge bad">{item.error_message}</div>}</td>
-                  <td className="mono">{item.domain || item.origin}</td>
-                  <td>{item.language || "—"}</td>
-                  <td>{item.page_count || item.page_count_estimate || "—"}</td>
-                  <td><Progress value={item.progress} /></td>
-                  <td>{stateLabel(item.state)}</td>
-                  <td>{formatWhen(item.added_at)}</td>
+                  <td>
+                    <Link to={`/documents/${item.id}`}>{item.title || item.url || "Documento"}</Link>
+                    <div className="mono">{item.url || item.domain || item.origin}</div>
+                    {item.error_message && <div className="badge bad">{item.error_message}</div>}
+                  </td>
+                  <td>
+                    <div>{nextStep(item.state)}</div>
+                    <Progress value={item.state === "awaiting_review" || item.state === "completed" ? 100 : item.progress} waiting={isActiveState(item.state) && item.state !== "paused"} />
+                  </td>
                   <td className="row">
+                    {(item.state === "draft" || item.state === "failed") && (
+                      <Button kind="ghost" onClick={() => void extract(item.id).then(load).catch((cause) => setError(isApiError(cause) ? cause.message : "A extração não começou."))}>Extrair</Button>
+                    )}
+                    {(item.state === "awaiting_review" || item.state === "completed" || item.state === "inconclusive") && (
+                      <Link className="btn secondary" to="/knowledge">Perguntar</Link>
+                    )}
                     <Button kind="ghost" onClick={() => setEditing(item)}>Editar</Button>
                     <Button kind="ghost" onClick={() => api(`/documents/${item.id}`, { method: "DELETE" }).then(load)}>Remover</Button>
                   </td>

@@ -20,6 +20,7 @@ Versão de trabalho: 0.1.0. Knowledge AI está na branch `cursor/cpmh-knowledge-
 | 10.5 Benchmark SciELO | Feito em 20 de novembro de 2026. O artigo de 27 páginas foi processado no backend real. A primeira passagem perdia texto em tabelas falsas; a correção subiu o recall do corpo para 0,9853. Decisão: resultado A, iniciar a Fase 11 sem aprovar o instalador. |
 | Knowledge AI | Módulo local integrado. Indexa o que o pipeline já extraiu, busca no SQLite e responde com citação ou com a recusa padrão. Sem LLM neural nesta máquina: a resposta medida é extrativa. Fine-tuning não executa. O instalador Windows segue sem teste. |
 | Acesso web | Detecção e pausa diante de CAPTCHA, login, bloqueio e limite. A verificação humana usa o Chromium já integrado, sem quebra de desafio. Testado com páginas locais, não com CAPTCHAs de produção. |
+| Recuperação de acesso | Diagnóstico, limite de tentativas, robots.txt e PDF público indicado pela própria página. Sem disfarce de automação e sem insistência em bloqueio. Testado com servidores locais. |
 
 ## Pendências
 

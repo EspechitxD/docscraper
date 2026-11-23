@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import shutil
 import sqlite3
@@ -28,6 +28,8 @@ DEFAULT_PREFERENCES: dict[str, object] = {
     "max_pages": 50,
     "max_download_mb": 80,
     "timeout_seconds": 30,
+    "domain_timeouts": {},
+    "domain_concurrency": 2,
     "retention_days_cache": 14,
     "purge_completed_captures_days": 0,
     "allow_local_network": False,
@@ -37,6 +39,12 @@ DEFAULT_PREFERENCES: dict[str, object] = {
     "external_translation_acknowledged": False,
     "open_folder_after_export": False,
     "theme": "cpmh-industrial",
+    "proxy_url": "",
+    "operator_name": "",
+    "vpn_required": True,
+    "vpn_provider": "rasdial",
+    "vpn_name": "NOME EXATO DA VPN",
+    "vpn_wireguard_conf": "",
 }
 
 _engine: Engine | None = None
@@ -47,7 +55,7 @@ def _sqlite_on_connect(dbapi_connection, _connection_record) -> None:
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA busy_timeout=3000")
     cursor.close()
 
 
@@ -279,3 +287,4 @@ def database_quick_check(settings: Settings | None = None) -> str:
 
 # Import side effect guard: glossary seed imports db only inside functions.
 _ = text
+

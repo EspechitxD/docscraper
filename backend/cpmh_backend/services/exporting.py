@@ -5,10 +5,9 @@ import zipfile
 from pathlib import Path
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Mm, Pt, RGBColor
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
@@ -23,6 +22,7 @@ from sqlalchemy.orm import Session
 from cpmh_backend.config import Settings
 from cpmh_backend.errors import AppError, CollisionError
 from cpmh_backend.hashing import sha256_file
+from cpmh_backend.intelligence import NON_BODY_KINDS, heading_depth
 from cpmh_backend.models import (
     DocumentElement,
     DocumentPage,
@@ -35,9 +35,21 @@ from cpmh_backend.models import (
     TranslationRecord,
     utcnow,
 )
-from cpmh_backend.security import assert_output_dir_allowed, safe_filename
+from cpmh_backend.security import prepare_output_dir, safe_filename
 
 _FONT_READY = False
+_ORANGE = "FF5000"
+_ORANGE_DEEP = "EA2F14"
+_INK = "29282A"
+_STEEL = "434E54"
+_SECONDARY = "575757"
+_LINE = "D1D4D1"
+_PAPER = "F7F7F7"
+_SIDEBAR = "22272A"
+
+
+def _rgb(value: str) -> RGBColor:
+    return RGBColor.from_string(value)
 
 
 def resolve_output_path(directory: Path, filename: str, collision: str | None) -> Path:
@@ -80,8 +92,11 @@ def export_document(
         translate_mode = normalize_translation_mode(translate_mode)
     except ValueError as exc:
         raise AppError("Modo de tradução desconhecido.") from exc
+    from cpmh_backend.services.pipeline import straighten_stored_pages
+
+    straighten_stored_pages(session, document)
     refresh_document_representation(session, document)
-    destination = assert_output_dir_allowed(Path(output_dir), install_dir=settings.install_dir)
+    destination = prepare_output_dir(output_dir, install_dir=settings.install_dir)
     base_name = safe_filename(output_name)
     stem = Path(base_name).stem
     elements = session.scalars(
@@ -105,29 +120,34 @@ def export_document(
         select(RegionRevision).where(RegionRevision.document_id == document.id).order_by(RegionRevision.created_at)
     ).all()
     produced: list[tuple[str, Path]] = []
-    if "docx" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.docx", collision)
-        _write_docx(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
-        produced.append(("docx", path))
-    if "pdf" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.pdf", collision)
-        _write_pdf(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
-        produced.append(("pdf", path))
-    if "txt" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.txt", collision)
-        path.write_text(_plain_text(elements, translations, mode, translate_mode, images, tables), encoding="utf-8")
-        produced.append(("txt", path))
-    if "json" in formats or "package" in formats:
-        path = resolve_output_path(destination, f"{stem}.json", collision)
-        path.write_text(
-            json.dumps(
-                _json_payload(document, elements, pages, tables, images, formulas, translations, regions, revisions),
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        produced.append(("json", path))
+    try:
+        if "docx" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.docx", collision)
+            _write_docx(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
+            produced.append(("docx", path))
+        if "pdf" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.pdf", collision)
+            _write_pdf(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode)
+            produced.append(("pdf", path))
+        if "txt" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.txt", collision)
+            path.write_text(_plain_text(elements, translations, mode, translate_mode, images, tables), encoding="utf-8")
+            produced.append(("txt", path))
+        if "json" in formats or "package" in formats:
+            path = resolve_output_path(destination, f"{stem}.json", collision)
+            path.write_text(
+                json.dumps(
+                    _json_payload(document, elements, pages, tables, images, formulas, translations, regions, revisions),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            produced.append(("json", path))
+    except OSError as exc:
+        raise AppError(
+            f"Não consegui gravar em {destination}. {exc.strerror or 'O sistema recusou a gravação.'}"
+        ) from exc
     records = []
     for fmt, path in produced:
         record = ExportedFile(
@@ -143,35 +163,40 @@ def export_document(
         )
         session.add(record)
         records.append(record)
-    if "package" in formats:
-        package = resolve_output_path(destination, f"{stem}.zip", collision)
-        with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for _fmt, path in produced:
-                archive.write(path, arcname=path.name)
-            for image in images:
-                if image.path and Path(image.path).exists():
-                    archive.write(image.path, arcname=f"imagens/{Path(image.path).name}")
-            manifest = {
-                "document_id": document.id,
-                "title": document.title,
-                "mode": mode,
-                "files": [path.name for _fmt, path in produced],
-                "sha256": {path.name: sha256_file(path) for _fmt, path in produced},
-            }
-            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-        record = ExportedFile(
-            id=_new_id(),
-            document_id=document.id,
-            job_id=job_id,
-            format="package",
-            path=str(package),
-            name=package.name,
-            created_at=utcnow(),
-            size=package.stat().st_size,
-            mode=mode,
-        )
-        session.add(record)
-        records.append(record)
+    try:
+        if "package" in formats:
+            package = resolve_output_path(destination, f"{stem}.zip", collision)
+            with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for _fmt, path in produced:
+                    archive.write(path, arcname=path.name)
+                for image in images:
+                    if image.path and Path(image.path).exists():
+                        archive.write(image.path, arcname=f"imagens/{Path(image.path).name}")
+                manifest = {
+                    "document_id": document.id,
+                    "title": document.title,
+                    "mode": mode,
+                    "files": [path.name for _fmt, path in produced],
+                    "sha256": {path.name: sha256_file(path) for _fmt, path in produced},
+                }
+                archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            record = ExportedFile(
+                id=_new_id(),
+                document_id=document.id,
+                job_id=job_id,
+                format="package",
+                path=str(package),
+                name=package.name,
+                created_at=utcnow(),
+                size=package.stat().st_size,
+                mode=mode,
+            )
+            session.add(record)
+            records.append(record)
+    except OSError as exc:
+        raise AppError(
+            f"Não consegui gravar em {destination}. {exc.strerror or 'O sistema recusou a gravação.'}"
+        ) from exc
     session.flush()
     return [
         {"id": item.id, "format": item.format, "path": item.path, "name": item.name, "size": item.size, "mode": item.mode}
@@ -217,10 +242,8 @@ def _partial_note(translations) -> str | None:
 
 def _write_docx(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode) -> None:
     doc = Document()
-    normal = doc.styles["Normal"]
-    normal.font.name = "Calibri"
-    normal.font.size = Pt(11)
-    _apply_header_footer(doc, elements)
+    _brand_docx(doc)
+    _apply_header_footer(doc)
     note = _partial_note(translations) if _wants_translation(mode, translate_mode) else None
     if note:
         paragraph = doc.add_paragraph(note)
@@ -235,41 +258,117 @@ def _write_docx(path, document, elements, pages, tables, images, formulas, trans
         doc.save(path)
         return
     trans = _translation_map(translations)
-    heading_elements = [element for element in elements if element.level or element.kind in {"title", "subtitle"}]
-    if heading_elements:
-        _add_toc(doc)
+    headings = [
+        element
+        for element in elements
+        if not element.skip_export
+        and element.kind == "subtitle"
+        and (element.text or "").strip()
+        and element.kind not in NON_BODY_KINDS
+    ]
+    # Sumário só com três títulos ou mais. Já sai preenchido com os nomes; o Word acrescenta os
+    # números de página quando o campo for atualizado (F9).
+    if len(headings) >= 3:
+        _add_toc(doc, [(element.text.strip(), _docx_heading_level(element)) for element in headings])
     page_of = {page.id: page.sequence for page in pages}
     grouped: dict[int, list] = {}
     for element in elements:
-        if element.skip_export or element.kind in {"header", "footer", "page_number"}:
+        if element.skip_export or element.kind in NON_BODY_KINDS:
             continue
         sequence = page_of.get(element.page_ids[0], 0) if element.page_ids else 0
         grouped.setdefault(sequence, []).append(element)
     sequences = sorted(set(grouped) | {table.page_sequence for table in tables})
     for sequence in sequences:
-        for element in grouped.get(sequence, []):
-            if translate_mode == "bilingual" and element.id in trans:
-                table = doc.add_table(rows=1, cols=2)
-                table.style = "Table Grid"
-                table.rows[0].cells[0].text = element.text
-                table.rows[0].cells[1].text = trans[element.id].translated_text
-                continue
-            _add_docx_element(doc, element, _text_for(element, trans, mode, translate_mode))
-        for table in tables:
-            if table.page_sequence != sequence:
-                continue
-            _add_docx_table(doc, table)
-        for image in images:
-            image_page = page_of.get(image.page_id, -1)
-            if image_page == sequence and image.path and Path(image.path).exists():
-                doc.add_picture(image.path, width=Cm(12))
-                if image.caption:
-                    doc.add_paragraph(image.caption, style="Caption")
-        for formula in formulas:
-            formula_page = next((page.sequence for page in pages if page.id == formula.page_id), -1)
-            if formula_page == sequence:
-                _add_docx_formula(doc, formula)
+        for _y, kind, payload in _page_flow(sequence, grouped, tables, images, formulas, pages, page_of):
+            if kind == "element":
+                element = payload
+                if translate_mode == "bilingual" and element.id in trans:
+                    table = doc.add_table(rows=1, cols=2)
+                    table.style = "Table Grid"
+                    table.rows[0].cells[0].text = element.text
+                    table.rows[0].cells[1].text = trans[element.id].translated_text
+                    continue
+                _add_docx_element(doc, element, _text_for(element, trans, mode, translate_mode))
+            elif kind == "table":
+                _add_docx_table(doc, payload)
+            elif kind == "image":
+                doc.add_picture(payload.path, width=Cm(12))
+                if payload.caption:
+                    doc.add_paragraph(payload.caption, style="Caption")
+            elif kind == "formula":
+                _add_docx_formula(doc, payload)
     doc.save(path)
+
+
+def _flow_y(value) -> float:
+    meta = getattr(value, "metadata_json", None)
+    if isinstance(meta, dict) and meta.get("y") is not None:
+        return float(meta["y"])
+    return float(getattr(value, "y", 0) or 0)
+
+
+def _element_x_range(element) -> tuple[float, float] | None:
+    meta = getattr(element, "metadata_json", None)
+    if isinstance(meta, dict) and meta.get("x") is not None and meta.get("w") is not None:
+        return float(meta["x"]), float(meta["x"]) + float(meta["w"])
+    return None
+
+
+def _insert_position(flow: list, y: float, x0: float | None, x1: float | None) -> int:
+    """Onde uma tabela, imagem ou fórmula entra na ordem de leitura já fixada dos elementos.
+
+    Entra depois do último elemento acima dele na mesma coluna. Sem elemento acima, entra
+    antes do primeiro que está abaixo na mesma coluna. Ordenar tudo por y misturava as colunas.
+    """
+    def same_column(element) -> bool:
+        if x0 is None or x1 is None:
+            return True
+        span = _element_x_range(element)
+        if span is None:
+            return True
+        return min(span[1], x1) - max(span[0], x0) > 0.02
+
+    above = -1
+    for index, (_y, kind, element) in enumerate(flow):
+        if kind == "element" and same_column(element) and _flow_y(element) <= y:
+            above = index
+    if above >= 0:
+        return above + 1
+    for index, (_y, kind, element) in enumerate(flow):
+        if kind == "element" and same_column(element) and _flow_y(element) > y:
+            return index
+    return len(flow)
+
+
+def _page_flow(sequence, grouped, tables, images, formulas, pages, page_of) -> list[tuple[float, str, object]]:
+    # Os elementos já vêm na ordem de leitura (colunas incluídas). Só o que não é texto é encaixado.
+    flow: list[tuple[float, str, object]] = [
+        (_flow_y(element), "element", element) for element in grouped.get(sequence, [])
+    ]
+    extras: list[tuple[float, float | None, float | None, str, object]] = []
+    for table in tables:
+        if table.page_sequence == sequence:
+            x, w = getattr(table, "x", None), getattr(table, "w", None)
+            extras.append((float(table.y or 0), x, (x or 0) + w if w else None, "table", table))
+    for image in images:
+        if page_of.get(image.page_id, -1) == sequence and image.path and Path(image.path).exists():
+            x, w = getattr(image, "x", None), getattr(image, "w", None)
+            extras.append((float(image.y or 0), x, (x or 0) + w if w else None, "image", image))
+    for formula in formulas:
+        formula_page = next((page.sequence for page in pages if page.id == formula.page_id), -1)
+        if formula_page == sequence:
+            extras.append((0.5, None, None, "formula", formula))
+    for y, x0, x1, kind, payload in sorted(extras, key=lambda item: item[0]):
+        flow.insert(_insert_position(flow, y, x0, x1), (y, kind, payload))
+    return flow
+
+
+def _docx_heading_level(element) -> int:
+    """Nível de título no Word: a profundidade da numeração (1., 1.2, 1.2.3) ou 2 se não houver."""
+    depth = heading_depth(element.text or "")
+    if depth:
+        return min(depth, 3)
+    return min(max(int(element.level or 2), 1), 3)
 
 
 def _add_docx_element(doc: Document, element, text: str) -> None:
@@ -277,14 +376,8 @@ def _add_docx_element(doc: Document, element, text: str) -> None:
         return
     if element.kind == "title":
         doc.add_paragraph(text, style="Title")
-    elif element.kind == "subtitle":
-        doc.add_paragraph(text, style="Subtitle")
-    elif element.level == 1:
-        doc.add_paragraph(text, style="Heading 1")
-    elif element.level == 2:
-        doc.add_paragraph(text, style="Heading 2")
-    elif element.level == 3:
-        doc.add_paragraph(text, style="Heading 3")
+    elif element.kind == "subtitle" or element.level:
+        doc.add_paragraph(text, style=f"Heading {_docx_heading_level(element)}")
     elif element.kind == "caption":
         doc.add_paragraph(text, style="Caption")
     else:
@@ -301,10 +394,67 @@ def _add_docx_table(doc: Document, table: TableRecord) -> None:
     width = len(table.rows[0])
     doc_table = doc.add_table(rows=len(table.rows), cols=width)
     doc_table.style = "Table Grid"
+    doc_table.autofit = True
+    header = _table_has_header(table.rows)
     for row_index, row in enumerate(table.rows):
         for col_index in range(width):
             value = row[col_index] if col_index < len(row) else ""
-            doc_table.rows[row_index].cells[col_index].text = "" if value is None else str(value)
+            cell = doc_table.rows[row_index].cells[col_index]
+            cell.text = "" if value is None else str(value)
+            _paint_cell(cell, header=header and row_index == 0, band=row_index % 2 == 0)
+    _tint_table_borders(doc_table)
+
+
+def _table_has_header(rows: list) -> bool:
+    if len(rows) < 2:
+        return False
+    def words(row) -> int:
+        return sum(len(str(cell or "").split()) for cell in row)
+    return words(rows[0]) <= max(6, int(statistics_median_words(rows[1:]) * 0.6))
+
+
+def statistics_median_words(rows: list) -> float:
+    counts = [sum(len(str(cell or "").split()) for cell in row) for row in rows]
+    if not counts:
+        return 0
+    counts.sort()
+    return counts[len(counts) // 2]
+
+
+def _paint_cell(cell, *, header: bool, band: bool) -> None:
+    shade = _ORANGE if header else (_PAPER if band else "FFFFFF")
+    color = "FFFFFF" if header else _INK
+    _shade_cell(cell, shade)
+    for paragraph in cell.paragraphs:
+        paragraph.paragraph_format.space_after = Pt(2)
+        paragraph.paragraph_format.space_before = Pt(2)
+        for run in paragraph.runs:
+            run.font.name = "Calibri"
+            run.font.size = Pt(10)
+            run.font.bold = header
+            run.font.color.rgb = _rgb(color)
+            run._element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+
+
+def _shade_cell(cell, fill: str) -> None:
+    properties = cell._tc.get_or_add_tcPr()
+    shade = OxmlElement("w:shd")
+    shade.set(qn("w:val"), "clear")
+    shade.set(qn("w:color"), "auto")
+    shade.set(qn("w:fill"), fill)
+    properties.append(shade)
+
+
+def _tint_table_borders(table) -> None:
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        element = OxmlElement(f"w:{edge}")
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), "4")
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), _LINE)
+        borders.append(element)
+    table._tbl.tblPr.append(borders)
 
 
 def _add_docx_formula(doc: Document, formula: FormulaRecord) -> None:
@@ -321,110 +471,263 @@ def _add_docx_formula(doc: Document, formula: FormulaRecord) -> None:
     doc.add_paragraph(formula.notes or "Fórmula preservada para revisão.", style="Caption")
 
 
-def _apply_header_footer(doc: Document, elements) -> None:
-    headers = [element.text for element in elements if element.kind == "header" and element.text]
-    footers = [element.text for element in elements if element.kind == "footer" and element.text]
+def _brand_docx(doc: Document) -> None:
+    _paint_style(doc.styles["Normal"], size=11, color=_INK, before=0, after=8)
+    _paint_style(doc.styles["Title"], size=22, color=_INK, before=0, after=10, bold=True)
+    _paint_style(doc.styles["Subtitle"], size=14, color=_ORANGE_DEEP, before=2, after=8)
+    _paint_style(doc.styles["Heading 1"], size=16, color=_ORANGE, before=14, after=6, bold=True)
+    _paint_style(doc.styles["Heading 2"], size=13, color=_ORANGE_DEEP, before=12, after=4, bold=True)
+    _paint_style(doc.styles["Heading 3"], size=12, color=_STEEL, before=10, after=4, bold=True)
+    _paint_style(doc.styles["Caption"], size=9, color=_SECONDARY, before=2, after=8)
+    _paint_style(doc.styles["Header"], size=9, color=_STEEL, before=0, after=2)
+    _paint_style(doc.styles["Footer"], size=8, color=_SECONDARY, before=0, after=0)
+    section = doc.sections[0]
+    section.page_width = Mm(210)
+    section.page_height = Mm(297)
+    section.left_margin = Mm(16)
+    section.right_margin = Mm(16)
+    section.top_margin = Mm(18)
+    section.bottom_margin = Mm(16)
+    section.header_distance = Mm(8)
+    section.footer_distance = Mm(8)
+
+
+def _paint_style(style, *, size: float, color: str, before: float, after: float, bold: bool = False) -> None:
+    style.font.name = "Calibri"
+    style.font.size = Pt(size)
+    style.font.bold = bold
+    style.font.color.rgb = _rgb(color)
+    style.paragraph_format.space_before = Pt(before)
+    style.paragraph_format.space_after = Pt(after)
+    style.paragraph_format.line_spacing = 1.15
+    style.element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
+
+
+def _apply_header_footer(doc: Document) -> None:
     section = doc.sections[0]
     header = section.header.paragraphs[0]
-    header.text = headers[0] if headers else "CPMH Document Intelligence"
+    header.clear()
     header.style = doc.styles["Header"]
+    mark = header.add_run("CPMH")
+    mark.bold = True
+    mark.font.color.rgb = _rgb(_ORANGE)
+    mark.font.size = Pt(11)
+    mark.font.name = "Calibri"
+    rest = header.add_run("   Document Intelligence")
+    rest.font.color.rgb = _rgb(_STEEL)
+    rest.font.size = Pt(9)
+    rest.font.name = "Calibri"
+    border = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "12")
+    bottom.set(qn("w:space"), "1")
+    bottom.set(qn("w:color"), _ORANGE)
+    border.append(bottom)
+    header._p.get_or_add_pPr().append(border)
     footer = section.footer.paragraphs[0]
-    footer.text = footers[0] if footers else ""
-    footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    footer.clear()
     footer.style = doc.styles["Footer"]
+    brand = footer.add_run("CPMH Digital")
+    brand.font.color.rgb = _rgb(_SECONDARY)
+    brand.font.size = Pt(8)
+    brand.font.name = "Calibri"
+    footer.add_run("\t")
+    _append_page_field(footer)
 
 
-def _add_toc(doc: Document) -> None:
-    paragraph = doc.add_paragraph()
+def _append_page_field(paragraph) -> None:
     run = paragraph.add_run()
+    run.font.size = Pt(8)
+    run.font.color.rgb = _rgb(_SECONDARY)
+    run.font.name = "Calibri"
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
     instr = OxmlElement("w:instrText")
     instr.set(qn("xml:space"), "preserve")
-    instr.text = ' TOC \\o "1-3" \\h \\z \\u '
-    separate = OxmlElement("w:fldChar")
-    separate.set(qn("w:fldCharType"), "separate")
-    placeholder = OxmlElement("w:t")
-    placeholder.text = "Atualize o sumário no Word para preencher os números de página."
+    instr.text = " PAGE "
     end = OxmlElement("w:fldChar")
     end.set(qn("w:fldCharType"), "end")
     run._r.append(begin)
     run._r.append(instr)
-    run._r.append(separate)
-    run._r.append(placeholder)
     run._r.append(end)
 
 
-def _ensure_font() -> str:
+def _add_toc(doc: Document, entries: list[tuple[str, int]]) -> None:
+    """Campo TOC do Word já preenchido com os títulos. Sem a frase 'Atualize o sumário'."""
+    def field(kind: str):
+        item = OxmlElement("w:fldChar")
+        item.set(qn("w:fldCharType"), kind)
+        return item
+
+    heading = doc.add_paragraph()
+    run = heading.add_run("Sumário")
+    run.bold = True
+    run.font.size = Pt(14)
+    total = len(entries)
+    for index, (text, level) in enumerate(entries):
+        paragraph = doc.add_paragraph()
+        paragraph.paragraph_format.left_indent = Cm(0.6 * (level - 1))
+        paragraph.paragraph_format.space_after = Pt(2)
+        if index == 0:
+            starter = paragraph.add_run()
+            starter._r.append(field("begin"))
+            instr = OxmlElement("w:instrText")
+            instr.set(qn("xml:space"), "preserve")
+            instr.text = ' TOC \\o "1-3" \\h \\z \\u '
+            starter._r.append(instr)
+            starter._r.append(field("separate"))
+        paragraph.add_run(text)
+        if index == total - 1:
+            closer = paragraph.add_run()
+            closer._r.append(field("end"))
+
+
+def _font_pair() -> tuple[str, str]:
     global _FONT_READY
-    path = Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc")
-    if path.exists():
+    regular = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    bold = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    if regular.exists() and bold.exists():
+        if not _FONT_READY:
+            pdfmetrics.registerFont(TTFont("CPMHBody", str(regular)))
+            pdfmetrics.registerFont(TTFont("CPMHDisplay", str(bold)))
+            _FONT_READY = True
+        return "CPMHBody", "CPMHDisplay"
+    fallback = Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc")
+    if fallback.exists():
         if not _FONT_READY:
             try:
-                pdfmetrics.registerFont(TTFont("CPMHBody", str(path), subfontIndex=0))
+                pdfmetrics.registerFont(TTFont("CPMHBody", str(fallback), subfontIndex=0))
                 _FONT_READY = True
             except Exception:
-                return "Helvetica"
+                return "Helvetica", "Helvetica"
         if _FONT_READY:
-            return "CPMHBody"
-    return "Helvetica"
+            return "CPMHBody", "CPMHBody"
+    return "Helvetica", "Helvetica"
 
 
 def _write_pdf(path, document, elements, pages, tables, images, formulas, translations, mode, translate_mode) -> None:
-    font = _ensure_font()
+    body_font, display_font = _font_pair()
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="CPMHBody", parent=styles["Normal"], fontName=font, fontSize=11, leading=15))
-    styles.add(ParagraphStyle(name="CPMHTitle", parent=styles["Title"], fontName=font, fontSize=18, leading=22, textColor=colors.HexColor("#29282A")))
-    styles.add(ParagraphStyle(name="CPMHHeading", parent=styles["Heading2"], fontName=font, fontSize=13, leading=16, textColor=colors.HexColor("#F25620")))
+    ink = colors.HexColor("#29282A")
+    orange = colors.HexColor("#FF5000")
+    deep = colors.HexColor("#EA2F14")
+    secondary = colors.HexColor("#575757")
+    styles.add(ParagraphStyle(name="CPMHBody", parent=styles["Normal"], fontName=body_font, fontSize=10.5, leading=15, textColor=ink, spaceAfter=6))
+    styles.add(ParagraphStyle(name="CPMHTitle", parent=styles["Title"], fontName=display_font, fontSize=18, leading=22, textColor=ink, spaceAfter=8))
+    styles.add(ParagraphStyle(name="CPMHHeading", parent=styles["Heading2"], fontName=display_font, fontSize=13, leading=16, textColor=orange, spaceBefore=10, spaceAfter=4))
+    styles.add(ParagraphStyle(name="CPMHSubhead", parent=styles["Heading3"], fontName=display_font, fontSize=11.5, leading=14, textColor=deep, spaceBefore=8, spaceAfter=3))
+    styles.add(ParagraphStyle(name="CPMHCaption", parent=styles["Italic"], fontName=body_font, fontSize=8.5, leading=11, textColor=secondary, spaceAfter=6))
+    styles.add(ParagraphStyle(name="CPMHCell", parent=styles["Normal"], fontName=body_font, fontSize=8.5, leading=11, textColor=ink))
+    styles.add(ParagraphStyle(name="CPMHHeadCell", parent=styles["Normal"], fontName=display_font, fontSize=8.5, leading=11, textColor=colors.white))
     story = []
     note = _partial_note(translations) if _wants_translation(mode, translate_mode) else None
     if note:
-        story.append(Paragraph(_xml(note), styles["CPMHBody"]))
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(Paragraph(_xml(note), styles["CPMHCaption"]))
+        story.append(Spacer(1, 0.2 * cm))
     if mode == "visual":
         for page in pages:
             if page.image_path and Path(page.image_path).exists():
                 story.append(RLImage(page.image_path, width=16 * cm, height=22 * cm, kind="proportional"))
-                story.append(Paragraph(f"Página {page.sequence}", styles["Italic"]))
-                story.append(Spacer(1, 0.4 * cm))
+                story.append(Paragraph(f"Página {page.sequence}", styles["CPMHCaption"]))
+                story.append(Spacer(1, 0.3 * cm))
     else:
         trans = _translation_map(translations)
+        page_of = {page.id: page.sequence for page in pages}
+        grouped: dict[int, list] = {}
         for element in elements:
-            if element.skip_export or element.kind in {"header", "footer", "page_number"}:
+            if element.skip_export or element.kind in NON_BODY_KINDS:
                 continue
-            text = _text_for(element, trans, mode, translate_mode)
-            if not text:
-                continue
-            style = styles["CPMHTitle"] if element.kind == "title" else styles["CPMHHeading"] if element.level or element.kind == "subtitle" else styles["CPMHBody"]
-            if translate_mode == "bilingual" and element.id in trans:
-                data = [[Paragraph(_xml(element.text), styles["CPMHBody"]), Paragraph(_xml(trans[element.id].translated_text), styles["CPMHBody"])]]
-                story.append(Table(data, colWidths=[8 * cm, 8 * cm]))
-            else:
-                story.append(Paragraph(_xml(text), style))
-            story.append(Spacer(1, 0.15 * cm))
-        for table in tables:
-            if table.rows and (table.reliable or table.review_state == "reviewed"):
-                data = [[Paragraph(_xml(str(cell or "")), styles["CPMHBody"]) for cell in row] for row in table.rows]
-                story.append(Table(data, style=TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#29282A"))])))
-                story.append(Spacer(1, 0.3 * cm))
-            elif table.image_path and Path(table.image_path).exists():
-                story.append(RLImage(table.image_path, width=14 * cm, height=6 * cm, kind="proportional"))
-                story.append(Paragraph("Tabela com reconhecimento incompleto — revisão necessária.", styles["Italic"]))
-        for image in images:
-            if image.path and Path(image.path).exists():
-                story.append(RLImage(image.path, width=12 * cm, height=8 * cm, kind="proportional"))
-                if image.caption:
-                    story.append(Paragraph(_xml(image.caption), styles["Italic"]))
-        for formula in formulas:
-            if formula.reliable and formula.text:
-                story.append(Paragraph(_xml(formula.text), styles["CPMHBody"]))
-            elif formula.image_path and Path(formula.image_path).exists():
-                story.append(RLImage(formula.image_path, width=8 * cm, height=2 * cm, kind="proportional"))
-                story.append(Paragraph(_xml(formula.notes or "Fórmula preservada para revisão."), styles["Italic"]))
+            sequence = page_of.get(element.page_ids[0], 0) if element.page_ids else 0
+            grouped.setdefault(sequence, []).append(element)
+        sequences = sorted(set(grouped) | {table.page_sequence for table in tables})
+        for sequence in sequences:
+            for _y, kind, payload in _page_flow(sequence, grouped, tables, images, formulas, pages, page_of):
+                if kind == "element":
+                    element = payload
+                    text = _text_for(element, trans, mode, translate_mode)
+                    if not text:
+                        continue
+                    if element.kind == "title":
+                        style = styles["CPMHTitle"]
+                    elif (element.kind == "subtitle" or element.level) and _docx_heading_level(element) == 1:
+                        style = styles["CPMHHeading"]
+                    elif element.level or element.kind == "subtitle":
+                        style = styles["CPMHSubhead"]
+                    elif element.kind == "caption":
+                        style = styles["CPMHCaption"]
+                    else:
+                        style = styles["CPMHBody"]
+                    if translate_mode == "bilingual" and element.id in trans:
+                        data = [[Paragraph(_xml(element.text), styles["CPMHCell"]), Paragraph(_xml(trans[element.id].translated_text), styles["CPMHCell"])]]
+                        story.append(Table(data, colWidths=[8 * cm, 8 * cm]))
+                    else:
+                        story.append(Paragraph(_xml(text), style))
+                elif kind == "table":
+                    _add_pdf_table(story, payload, styles)
+                elif kind == "image":
+                    story.append(RLImage(payload.path, width=12 * cm, height=8 * cm, kind="proportional"))
+                    if payload.caption:
+                        story.append(Paragraph(_xml(payload.caption), styles["CPMHCaption"]))
+                elif kind == "formula":
+                    if payload.reliable and payload.text:
+                        story.append(Paragraph(_xml(payload.text), styles["CPMHBody"]))
+                    elif payload.image_path and Path(payload.image_path).exists():
+                        story.append(RLImage(payload.image_path, width=8 * cm, height=2 * cm, kind="proportional"))
+                        story.append(Paragraph(_xml(payload.notes or "Fórmula preservada para revisão."), styles["CPMHCaption"]))
     if not story:
         story.append(Paragraph("Documento sem conteúdo exportável.", styles["CPMHBody"]))
-    pdf = SimpleDocTemplate(str(path), pagesize=A4, title=document.title or "CPMH Document Intelligence")
-    pdf.build(story)
+
+    def paint(canvas, pdf_doc):
+        canvas.saveState()
+        width, height = A4
+        canvas.setFillColor(colors.HexColor("#FF5000"))
+        canvas.rect(0, height - 8, width, 8, fill=1, stroke=0)
+        canvas.setFillColor(colors.HexColor(f"#{_SIDEBAR}"))
+        canvas.rect(0, 0, width, 26, fill=1, stroke=0)
+        canvas.setFillColor(colors.white)
+        canvas.setFont(body_font, 8)
+        canvas.drawString(1.6 * cm, 10, "CPMH   Document Intelligence")
+        canvas.drawRightString(width - 1.6 * cm, 10, str(pdf_doc.page))
+        canvas.restoreState()
+
+    pdf = SimpleDocTemplate(
+        str(path),
+        pagesize=A4,
+        title=document.title or "CPMH Document Intelligence",
+        leftMargin=1.6 * cm,
+        rightMargin=1.6 * cm,
+        topMargin=1.5 * cm,
+        bottomMargin=1.4 * cm,
+    )
+    pdf.build(story, onFirstPage=paint, onLaterPages=paint)
+
+
+def _add_pdf_table(story, table, styles) -> None:
+    if table.rows and (table.reliable or table.review_state == "reviewed"):
+        header = _table_has_header(table.rows)
+        data = []
+        for index, row in enumerate(table.rows):
+            style = styles["CPMHHeadCell"] if header and index == 0 else styles["CPMHCell"]
+            data.append([Paragraph(_xml(str(cell or "")), style) for cell in row])
+        commands = [
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D1D4D1")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 4),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("BACKGROUND", (0, 1), (-1, -1), colors.white),
+        ]
+        if header:
+            commands.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#FF5000")))
+        else:
+            commands.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F7F7F7")))
+        story.append(Table(data, style=TableStyle(commands)))
+        story.append(Spacer(1, 0.3 * cm))
+    elif table.image_path and Path(table.image_path).exists():
+        story.append(RLImage(table.image_path, width=14 * cm, height=6 * cm, kind="proportional"))
+        story.append(Paragraph("Tabela com reconhecimento incompleto — revisão necessária.", styles["CPMHCaption"]))
 
 
 def _plain_text(elements, translations, mode, translate_mode, images=(), tables=()) -> str:
@@ -435,7 +738,7 @@ def _plain_text(elements, translations, mode, translate_mode, images=(), tables=
         lines.append(note)
         lines.append("")
     for element in elements:
-        if element.skip_export or element.kind in {"header", "footer", "page_number"}:
+        if element.skip_export or element.kind in NON_BODY_KINDS:
             continue
         if translate_mode == "bilingual" and element.id in trans:
             lines.append(element.text)

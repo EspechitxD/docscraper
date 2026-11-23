@@ -21,3 +21,9 @@ frontend/dist/
 htmlcov/
 build/
 *.egg-info/
+
+# artefatos locais
+backend/_backup_vpn_*/
+*.bak
+lab/
+chromium_automation.zip

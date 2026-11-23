@@ -14,8 +14,17 @@ STATES = {
     "RATE_LIMITED",
     "UNKNOWN_BLOCK",
     "NAVIGATION_ERROR",
+    "JAVASCRIPT_REQUIRED",
+    "SESSION_EXPIRED",
+    "BROWSER_ERROR",
 }
 
+_SLIDER_PROMPT = re.compile(
+    r"(滑动验证|滑块验证|拖动.{0,8}滑块|请完成.{0,6}验证|安全验证|人机验证|"
+    r"slide to (?:verify|complete|unlock)|drag the slider|complete the (?:slider|security) (?:check|verification)|"
+    r"arraste o (?:controle deslizante|bot[ãa]o)|deslize para verificar|verifica[çc][ãa]o (?:de seguran[çc]a|deslizante))",
+    re.IGNORECASE,
+)
 _SECRET = re.compile(r"(?i)(cookie|set-cookie|authorization|sitekey|token|password)\s*[:=]\s*\S+")
 _LONG_TOKEN = re.compile(r"\b[A-Za-z0-9_\-]{40,}\b")
 
@@ -36,6 +45,7 @@ def signals_from_html(url: str, final_url: str, status: int, html: str) -> dict:
         "type='password'",
         "id=\"captcha\"",
         "class=\"captcha\"",
+        "<noscript",
     ):
         if needle in lowered:
             markers.append(needle)
@@ -56,7 +66,8 @@ def classify(signals: dict) -> dict:
     final_url = str(signals.get("final_url") or url)
     status = int(signals.get("status") or 0)
     title = _clean(signals.get("title") or "")
-    text = _clean(signals.get("text") or "")
+    raw_text = str(signals.get("text") or "")
+    text = _clean(raw_text)
     markers = [_clean(item) for item in signals.get("markers") or []]
     iframes = [_clean(item) for item in signals.get("iframes") or []]
     scripts = [_clean(item) for item in signals.get("scripts") or []]
@@ -66,7 +77,9 @@ def classify(signals: dict) -> dict:
 
     if error:
         evidence.append("navegação interrompida")
-        return _verdict("NAVIGATION_ERROR", "none", 0.9, url, final_url, evidence, status)
+        if any(token in error.lower() for token in ("browser", "navegador", "playwright")):
+            return _verdict("BROWSER_ERROR", "browser", 0.9, url, final_url, evidence, status)
+        return _verdict("NAVIGATION_ERROR", "network", 0.9, url, final_url, evidence, status)
 
     if status == 429 or _has(folded, "too many requests", "rate limit", "muitas solicitações"):
         evidence.append(f"http {status}" if status else "texto de limite")
@@ -86,10 +99,32 @@ def classify(signals: dict) -> dict:
     if widget == "unknown":
         return _verdict("CAPTCHA_DETECTED", "unknown", 0.72, url, final_url, evidence, status)
 
+    # Verificação por controle deslizante ou quebra-cabeça, sem widget conhecido (comum em sites chineses).
+    # O texto visível diz o que fazer; só pausamos. Nunca arrastamos o controle.
+    if len(raw_text) < 2000 and _SLIDER_PROMPT.search(folded):
+        evidence.append("texto pedindo verificação por controle deslizante")
+        return _verdict("CAPTCHA_DETECTED", "slider", 0.9, url, final_url, evidence, status)
+
     cloudflare = _cloudflare_interstitial(folded, markers)
     if cloudflare or (challenge_url and _has(folded, "humano", "human", "verificar", "verify", "moment")):
         evidence.extend(cloudflare)
         return _verdict("HUMAN_VERIFICATION_REQUIRED", "cloudflare_challenge" if cloudflare else "unknown", 0.84, url, final_url, evidence, status)
+
+    if _has(folded, "sessão expirada", "sessão expirou", "sua sessão expirou", "session expired", "session has expired"):
+        evidence.append("texto de sessão expirada")
+        return _verdict("SESSION_EXPIRED", "none", 0.86, url, final_url, evidence, status)
+
+    javascript = _has(
+        folded,
+        "habilite o javascript",
+        "enable javascript",
+        "javascript is required",
+        "javascript obrigatório",
+        "you need to enable javascript",
+    )
+    if signals.get("rendered") and javascript and len(raw_text) < 500:
+        evidence.append("página ainda pede JavaScript depois da execução")
+        return _verdict("JAVASCRIPT_REQUIRED", "none", 0.8, url, final_url, evidence, status)
 
     if status == 401 or (_password(markers) and _has(folded, "entrar", "login", "sign in", "senha", "password")):
         if status == 401:
@@ -202,6 +237,7 @@ def _message(state: str, provider: str) -> str:
         "turnstile": "Cloudflare Turnstile",
         "cloudflare_challenge": "verificação da Cloudflare",
         "unknown": "CAPTCHA não identificado",
+        "slider": "verificação por controle deslizante",
         "none": "restrição de acesso",
     }
     name = names.get(provider, "restrição de acesso")
@@ -219,4 +255,10 @@ def _message(state: str, provider: str) -> str:
         return "O site limitou o número de pedidos. A tarefa fica pausada. Não há nova tentativa automática."
     if state == "NAVIGATION_ERROR":
         return "A navegação não chegou a abrir a página. Confira o endereço e tente a checagem de novo."
+    if state == "BROWSER_ERROR":
+        return "O navegador de captura falhou antes de abrir a página. A nova checagem usa o mesmo Chromium, sem outro identificador."
+    if state == "SESSION_EXPIRED":
+        return "A sessão da página expirou. Entre de novo no navegador, se o site permitir. A captura não reaproveita senha nem cookie."
+    if state == "JAVASCRIPT_REQUIRED":
+        return "A página continuou pedindo JavaScript depois que o navegador de captura o executou. Abra o endereço no navegador integrado. O aplicativo não mascara a automação."
     return "O acesso não pôde ser classificado com segurança. A extração permanece pausada."

@@ -19,10 +19,10 @@ Nenhuma correção é uma exceção com o nome deste artigo. Os testes usam bloc
 
 | Id | Prioridade | Origem | Impacto | Próximo passo | Aceite |
 | --- | --- | --- | --- | --- | --- |
-| S7 | P2 | Tabela | Dentro da célula, a ordem das palavras ainda mistura a segunda linha com a primeira. Exemplo real: “Population população?) (que”. | Ordenar as palavras da célula por linha e, dentro da linha, da esquerda para a direita, com uma tolerância de base. | A frase “(que população?)” aparece contínua na célula do quadro PICO. |
+| S7 | P2 | Tabela | **Corrigido em 21/11/2026** (`_grid_from_ruled_box` usa `lines_from_words`). Dentro da célula, a ordem das palavras ainda mistura a segunda linha com a primeira. Exemplo real: “Population população?) (que”. | Ordenar as palavras da célula por linha e, dentro da linha, da esquerda para a direita, com uma tolerância de base. | A frase “(que população?)” aparece contínua na célula do quadro PICO. |
 | S8 | P2 | Classificação | A primeira linha de uma referência, quando o ano está na linha seguinte, pode sair como subtítulo. Acontece com Xiao e Watson. | Tratar bloco em caixa alta seguido de “review.” ou de DOI na região seguinte como referência. | Essa linha deixa de usar estilo de subtítulo. |
 | S9 | P2 | Imagem | Os rótulos de dentro do fluxograma não são texto selecionável. Estão no recorte. | Manter o recorte e, se a caixa tiver texto horizontal estável, acrescentar uma transcrição marcada como texto de figura. | O TXT declara que aqueles tokens estão na figura, ou os transcreve sem partir as palavras. |
 | S10 | P3 | Exportação | O PDF editável tem 23 páginas, não 27. O JSON tem as 27. | Não tratar o PDF refluído como facsimile. Um modo visual página a página seria outro produto. | O relatório de exportação diz que a contagem do PDF editável pode diferir. |
-| S11 | P3 | Classificação | “Respondendo à QI que norteou este estudo –” ficou subtítulo. É um começo de parágrafo curto e sem ponto. | Exigir que subtítulo sem numeração não termine em travessão. | Esse trecho volta a parágrafo. |
+| S11 | P3 | Classificação | **Corrigido em 21/11/2026** (`looks_like_fragment`). “Respondendo à QI que norteou este estudo –” ficou subtítulo. É um começo de parágrafo curto e sem ponto. | Exigir que subtítulo sem numeração não termine em travessão. | Esse trecho volta a parágrafo. |
 
 Não há P0 aberto neste artigo depois da segunda passagem.

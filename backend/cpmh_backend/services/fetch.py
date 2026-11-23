@@ -20,6 +20,15 @@ class FetchResult:
     kind: str
 
 
+def _retry_after(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value.strip()))
+    except ValueError:
+        return None
+
+
 def sniff_kind(data: bytes, content_type: str) -> str:
     if data.startswith(b"%PDF-"):
         return "pdf"
@@ -70,7 +79,7 @@ def fetch_url(
                             if len(raw) >= 4000:
                                 break
                         snippet = raw[:4000].decode("utf-8", errors="replace")
-                    raise HttpAccess(response.status_code, validated.url, snippet)
+                    raise HttpAccess(response.status_code, validated.url, snippet, _retry_after(response.headers.get("retry-after")))
                 chunks: list[bytes] = []
                 total = 0
                 for chunk in response.iter_bytes():

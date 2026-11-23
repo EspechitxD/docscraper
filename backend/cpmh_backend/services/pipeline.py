@@ -3,20 +3,30 @@ from __future__ import annotations
 import logging
 import shutil
 import threading
+import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from PIL import Image
 from sqlalchemy import delete, select
 
+from cpmh_backend.access_flow import remember
 from cpmh_backend.config import get_settings
 from cpmh_backend.db import preference_value, session_scope
-from cpmh_backend.access import classify, signals_from_html
-from cpmh_backend.access_flow import remember
-from cpmh_backend.errors import AccessPaused, AppError, CollisionError, HttpAccess, UrlRejected
+from cpmh_backend.errors import AccessPaused, AppError, CollisionError, UrlRejected
+from cpmh_backend.recovery import declared_pdf, managed_fetch, timeout_for
 from cpmh_backend.hashing import dhash, sha256_bytes, sha256_file
-from cpmh_backend.intelligence import Block, FlowPiece, classify_blocks, detect_language, link_page_continuity, reading_order
+from cpmh_backend.intelligence import (
+    Block,
+    FlowPiece,
+    classify_blocks,
+    detect_language,
+    grid_from_blocks,
+    link_page_continuity,
+    reading_order,
+)
 from cpmh_backend.models import (
     Capture,
     Document,
@@ -27,6 +37,7 @@ from cpmh_backend.models import (
     ImageAsset,
     OCRRegion,
     ProcessingJob,
+    RegionRevision,
     ProcessingStep,
     TableRecord,
     TranslationRecord,
@@ -34,7 +45,6 @@ from cpmh_backend.models import (
 )
 from cpmh_backend.paths import document_dir
 from cpmh_backend.services.exporting import export_document
-from cpmh_backend.services.fetch import fetch_url
 from cpmh_backend.services.ocr import recognize
 from cpmh_backend.services.pdf_analysis import analyze_pdf
 from cpmh_backend.services.translate import translate_text
@@ -62,11 +72,13 @@ def run_job(job_id: str) -> None:
         job.attempts = (job.attempts or 0) + 1
         job.started_at = job.started_at or utcnow()
         job.error = ""
+        session.flush()
         try:
             _execute(session, settings, job, document)
         except AccessPaused as exc:
-            remember(session, job, document, exc.verdict, source="capture")
-            _step(session, job, "capturing", "paused", exc.verdict.get("message", "")[:500])
+            verdict = exc.verdict if isinstance(exc.verdict, dict) else {}
+            remember(session, job, document, verdict, source="capture")
+            _step(session, job, "capturing", "paused", str(verdict.get("message") or "Acesso pausado.")[:500])
         except CollisionError as exc:
             job.state = "awaiting_review"
             job.stage = "exporting"
@@ -75,22 +87,34 @@ def run_job(job_id: str) -> None:
             document.error_message = exc.message
             _step(session, job, "export", "collision", exc.message)
         except (AppError, UrlRejected) as exc:
+            session.refresh(job)
+            if job.state in {"cancelled", "paused"}:
+                return
             message = exc.message if hasattr(exc, "message") else str(exc)
             job.state = "failed"
             job.error = message[:500]
             job.finished_at = utcnow()
+            job.started_at = job.started_at or job.finished_at
+            job.attempts = job.attempts or 1
             document.state = "failed"
             document.error_message = job.error
             _step(session, job, "error", "failed", job.error)
             logger.warning("job %s falhou: %s", job_id, job.error)
         except Exception as exc:
+            short, full = _failure_report(exc)
+            stage = job.stage if job.stage in {"download", "browser", "pdf"} else ""
+            if stage:
+                short = f"Etapa {stage}: {short}"[:500]
+                full = f"Etapa {stage}\n{full}"[:4000]
             job.state = "failed"
-            job.error = f"{type(exc).__name__}: {exc}"[:500]
+            job.error = full
             job.finished_at = utcnow()
+            job.started_at = job.started_at or job.finished_at
+            job.attempts = job.attempts or 1
             document.state = "failed"
-            document.error_message = job.error
-            _step(session, job, "error", "failed", job.error)
-            logger.exception("job %s falhou", job_id)
+            document.error_message = full
+            _step(session, job, "error", "failed", short)
+            logger.error("job %s falhou\n%s", job_id, full)
 
 
 def process_available() -> bool:
@@ -137,6 +161,10 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     max_pages = int(preference_value(session, "max_pages") or 50)
     max_bytes = int(preference_value(session, "max_download_mb") or 80) * 1024 * 1024
     timeout = float(preference_value(session, "timeout_seconds") or 30)
+    host = urlsplit(document.normalized_url or document.url or "").hostname or ""
+    configured = preference_value(session, "domain_timeouts") or {}
+    timeout = timeout_for(host, timeout, configured if isinstance(configured, dict) else {})
+    domain_limit = int(preference_value(session, "domain_concurrency") or 2)
     allow_local = bool(settings.allow_local_network or preference_value(session, "allow_local_network"))
     folder = document_dir(settings, document.project_id, document.id)
     force = bool(options.get("force_recapture"))
@@ -145,7 +173,7 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
         _clear_working_files(session, document, folder)
         checkpoint = {}
         job.checkpoint = {}
-    local = _ensure_source(session, settings, job, document, folder, allow_local, max_bytes, timeout, force)
+    local = _ensure_source(session, settings, job, document, folder, allow_local, max_bytes, timeout, force, domain_limit)
     if not _stage(session, job, document, "capturing", 15):
         return
     existing_region = session.scalar(
@@ -153,28 +181,21 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     )
     resume = bool((job.checkpoint or {}).get("pages_done"))
     keep_review = existing_region is not None and not force and not resume
+    straightened = False
     if keep_review:
-        _step(session, job, "ocr", "skipped", "Revisão existente preservada. A captura não foi refeita.")
+        straightened = straighten_stored_pages(session, document, languages)
+        if straightened:
+            _step(session, job, "ocr", "done", "As páginas de cabeça para baixo foram lidas de novo.")
+        else:
+            _step(session, job, "ocr", "skipped", "Revisão existente preservada. A captura não foi refeita.")
     elif document.source_kind == "pdf":
-        _persist_pdf(session, job, document, Path(local), languages, folder)
+        try:
+            _persist_pdf(session, job, document, Path(local), languages, folder)
+        except Exception as exc:
+            if not _recover_html(session, job, document, folder, languages, exc):
+                raise
     elif document.source_kind == "html":
-        from cpmh_backend.services.capture import capture_html
-
-        captured = capture_html(
-            document.normalized_url or document.url,
-            folder / "pages",
-            allow_local=allow_local,
-            max_pages=max_pages,
-            timeout=timeout,
-        )
-        if captured.get("status") == "blocked":
-            remember(session, job, document, captured["access"], source="capture")
-            _step(session, job, "capturing", "paused", captured["access"].get("message", "")[:500])
-            return
-        document.capture_status = captured["status"]
-        _persist_rendered_pages(session, job, document, captured["pages"], languages, folder)
-        if captured["status"] != "complete":
-            document.state = "inconclusive"
+        _capture_page(session, job, document, folder, languages, allow_local, max_pages, timeout)
     else:
         _persist_rendered_pages(
             session,
@@ -188,7 +209,7 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
         return
     if not _stage(session, job, document, "structuring", 70):
         return
-    if not keep_review:
+    if not keep_review or straightened:
         _rebuild_elements(session, document)
     _continue_tables(session, document)
     _detect_document_language(session, document)
@@ -230,7 +251,17 @@ def _execute(session, settings, job: ProcessingJob, document: Document) -> None:
     _finish(session, job, document, final, message)
 
 
-def _ensure_source(session, settings, job, document, folder: Path, allow_local, max_bytes, timeout, force: bool) -> str:
+def _store_trace(job, trace: list[dict]) -> None:
+    if not trace:
+        return
+    checkpoint = dict(job.checkpoint or {})
+    rows = list(checkpoint.get("requests") or [])
+    rows.extend(trace)
+    checkpoint["requests"] = rows[-20:]
+    job.checkpoint = checkpoint
+
+
+def _ensure_source(session, settings, job, document, folder: Path, allow_local, max_bytes, timeout, force: bool, domain_limit: int) -> str:
     if document.local_path and Path(document.local_path).exists() and not force and document.source_kind != "html":
         return document.local_path
     if document.origin == "file" and document.local_path and Path(document.local_path).exists():
@@ -238,11 +269,66 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     if not document.url:
         raise AppError("O documento não possui arquivo local nem URL.")
     _step(session, job, "validating", "done", "URL validada para download autorizado.")
+    _step(session, job, "download", "running", "Baixando o endereço.")
+    job.stage = "download"
+    _release_db(session)
+    logger.info("job %s etapa download início %s", job.id, document.url)
+    trace: list[dict] = []
+
+    def stopped() -> bool:
+        _reload_job(session, job)
+        return job.state in {"cancelled", "paused"}
+
     try:
-        result = fetch_url(document.url, allow_local=allow_local, max_bytes=max_bytes, timeout=timeout)
-    except HttpAccess as exc:
-        signals = signals_from_html(document.url or "", exc.final_url, exc.http_status, exc.snippet)
-        raise AccessPaused(classify(signals)) from exc
+        result, _cached = managed_fetch(
+            document.url,
+            allow_local=allow_local,
+            max_bytes=max_bytes,
+            timeout=timeout,
+            domain_limit=domain_limit,
+            should_stop=stopped,
+            trace=trace,
+        )
+    except AccessPaused:
+        _store_trace(job, trace)
+        raise
+    except Exception:
+        _store_trace(job, trace)
+        _step(session, job, "download", "failed", "O download falhou.")
+        raise
+    if result.kind == "html":
+        text = result.data.decode("utf-8", errors="replace")
+        (folder / "original" / "source.html").write_bytes(result.data)
+        declared = declared_pdf(text, result.final_url)
+        if declared:
+            _release_db(session)
+            try:
+                pdf_result, _pdf_cached = managed_fetch(
+                    declared["url"],
+                    allow_local=allow_local,
+                    max_bytes=max_bytes,
+                    timeout=timeout,
+                    domain_limit=domain_limit,
+                    should_stop=stopped,
+                    trace=trace,
+                )
+            except AccessPaused:
+                _step(session, job, "validating", "done", "O PDF indicado pela página não foi baixado. A extração continua na página HTML.")
+            except (AppError, UrlRejected) as exc:
+                if "cancelada" in str(getattr(exc, "message", exc)).lower():
+                    _store_trace(job, trace)
+                    raise
+                _step(session, job, "validating", "done", "O PDF indicado pela página não foi baixado. A extração continua na página HTML.")
+            except Exception:
+                _store_trace(job, trace)
+                _step(session, job, "download", "failed", "O download do PDF indicado pela página falhou.")
+                raise
+            else:
+                if pdf_result.kind == "pdf":
+                    result = pdf_result
+    _store_trace(job, trace)
+    logger.info("job %s etapa download fim kind=%s", job.id, result.kind)
+    _step(session, job, "download", "done", f"Download concluído ({result.kind}).")
     if result.kind == "pdf":
         destination = folder / "original" / "source.pdf"
         destination.write_bytes(result.data)
@@ -265,6 +351,117 @@ def _ensure_source(session, settings, job, document, folder: Path, allow_local, 
     raise AppError("O endereço não devolveu um PDF, uma imagem ou uma página HTML utilizável.")
 
 
+def _failure_report(exc: BaseException) -> tuple[str, str]:
+    """Resumo de uma linha para a etapa e o traceback completo para o documento."""
+    formatted = traceback.format_exc().strip()
+    frames = traceback.extract_tb(exc.__traceback__)
+    own = [frame for frame in frames if "cpmh_backend" in frame.filename.replace("\\", "/")]
+    frame = (own or frames)[-1] if frames else None
+    where = f"{Path(frame.filename).name}:{frame.lineno} em {frame.name}" if frame else "sem rastreio"
+    short = f"{type(exc).__name__}: {exc} ({where})"
+    if len(formatted) > 3400:
+        formatted = formatted[:1500] + "\n...\n" + formatted[-1700:]
+    return short[:500], f"{short}\n{formatted}"[:4000]
+
+
+def _browser_gave_up(captured: dict) -> bool:
+    access = captured.get("access") if isinstance(captured.get("access"), dict) else {}
+    state = str(access.get("state") or "")
+    pages = [page for page in (captured.get("pages") or []) if isinstance(page, dict)]
+    if pages and captured.get("status") != "blocked":
+        return False
+    if captured.get("status") == "blocked" and state not in {"BROWSER_ERROR", "NAVIGATION_ERROR"}:
+        return False
+    return True
+
+
+def _read_saved_html(folder: Path, url: str) -> dict | None:
+    html_file = folder / "original" / "source.html"
+    if not html_file.exists() or html_file.stat().st_size == 0:
+        return None
+    from cpmh_backend.services.capture import pages_from_downloaded_html
+
+    return pages_from_downloaded_html(html_file.read_text(encoding="utf-8", errors="replace"), url, folder / "pages")
+
+
+def _pause_capture(session, job, document, captured: dict) -> None:
+    access = captured.get("access") if isinstance(captured.get("access"), dict) else {}
+    remember(session, job, document, access, source="capture")
+    _step(session, job, "capturing", "paused", str(access.get("message") or "A captura foi pausada.")[:500])
+
+
+def _capture_page(session, job, document, folder: Path, languages, allow_local, max_pages, timeout) -> None:
+    from cpmh_backend.services.capture import capture_html
+
+    _step(session, job, "browser", "running", "Lendo a página no navegador.")
+    job.stage = "browser"
+    logger.info("job %s etapa browser início", job.id)
+    _release_db(session)
+    browser_error: BaseException | None = None
+    try:
+        captured = capture_html(
+            document.normalized_url or document.url,
+            folder / "pages",
+            allow_local=allow_local,
+            max_pages=max_pages,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        browser_error = exc
+        short, full = _failure_report(exc)
+        logger.error("job %s etapa browser falhou\n%s", job.id, full)
+        _step(session, job, "browser", "failed", short)
+        captured = {"status": "browser_failed", "pages": [], "error": full}
+    else:
+        logger.info("job %s etapa browser fim status=%s", job.id, captured.get("status") if isinstance(captured, dict) else type(captured).__name__)
+    if not isinstance(captured, dict):
+        captured = {"status": "browser_failed", "pages": []}
+    interface_only = False
+    if _browser_gave_up(captured):
+        fallback = _read_saved_html(folder, document.normalized_url or document.url or "")
+        interface_only = bool(fallback and fallback.get("status") == "interface_only")
+        if fallback and (fallback.get("pages") or fallback.get("status") == "blocked"):
+            if fallback.get("pages"):
+                _step(session, job, "capturing", "done", "O navegador não leu a página. O texto foi extraído do HTML recebido.")
+            captured = fallback
+    if captured.get("status") == "blocked":
+        _pause_capture(session, job, document, captured)
+        return
+    pages = [page for page in (captured.get("pages") or []) if isinstance(page, dict)]
+    if not pages:
+        if interface_only:
+            raise AppError(
+                "A página só trouxe a interface do site (menus, botões e rodapé). As páginas do documento são "
+                "desenhadas em imagem e o navegador não as leu"
+                + (f" ({browser_error})" if browser_error is not None else "")
+                + ". Nada foi exportado, para não gerar um documento de menus. Instale o Chrome (ou use o Edge) para a captura "
+                "ou importe o PDF do documento."
+            )
+        if browser_error is not None:
+            raise browser_error
+        raise AppError("A página foi recebida, mas não havia texto para extrair.")
+    document.capture_status = "complete" if captured.get("source") == "html_text" else (captured.get("status") or "inconclusive")
+    _persist_rendered_pages(session, job, document, pages, languages, folder)
+    if document.capture_status != "complete":
+        document.state = "inconclusive"
+
+
+def _recover_html(session, job, document, folder: Path, languages, exc: BaseException) -> bool:
+    fallback = _read_saved_html(folder, document.normalized_url or document.url or "")
+    if not fallback or not fallback.get("pages"):
+        return False
+    logger.exception("leitura do pdf indicado pela página: %s", exc)
+    checkpoint = dict(job.checkpoint or {})
+    checkpoint["pages_done"] = []
+    job.checkpoint = checkpoint
+    document.source_kind = "html"
+    document.local_path = ""
+    document.capture_status = "complete"
+    _step(session, job, "capturing", "done", "O PDF indicado pela página não pôde ser lido. O texto foi extraído do HTML recebido.")
+    _persist_rendered_pages(session, job, document, fallback["pages"], languages, folder)
+    return True
+
+
 def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path) -> None:
     if not _stage(session, job, document, "ocr", 35):
         return
@@ -275,7 +472,16 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
         for page in existing_pages
         if page.sequence in done and page.image_path and Path(page.image_path).exists()
     }
-    analysis = analyze_pdf(pdf_path, languages)
+    _step(session, job, "pdf", "running", "Lendo o PDF.")
+    job.stage = "pdf"
+    logger.info("job %s etapa pdf início %s", job.id, pdf_path)
+    _release_db(session)
+    try:
+        analysis = analyze_pdf(pdf_path, languages)
+    except Exception:
+        _step(session, job, "pdf", "failed", "A leitura do PDF falhou.")
+        raise
+    logger.info("job %s etapa pdf fim páginas=%s", job.id, len(analysis.get("pages") or []))
     document.page_count = analysis["page_count"]
     document.page_count_estimate = analysis["page_count"]
     document.capture_status = "complete"
@@ -298,6 +504,7 @@ def _persist_pdf(session, job, document, pdf_path: Path, languages, folder: Path
 
 
 def _persist_rendered_pages(session, job, document, pages: list[dict], languages, folder: Path) -> None:
+    logger.info("job %s etapa gravação início páginas=%s", job.id, len(pages))
     if not _stage(session, job, document, "ocr", 40):
         return
     checkpoint = dict(job.checkpoint or {})
@@ -305,9 +512,12 @@ def _persist_rendered_pages(session, job, document, pages: list[dict], languages
     if not done:
         _replace_pages(session, document)
     for page in pages:
+        if not isinstance(page, dict):
+            continue
         if page.get("sequence") in done:
             continue
         if not page.get("blocks"):
+            _release_db(session)
             image = Image.open(page["path"]).convert("RGB")
             blocks, image, notes = recognize(image, languages)
             classify_blocks(blocks)
@@ -324,6 +534,7 @@ def _persist_rendered_pages(session, job, document, pages: list[dict], languages
         job.checkpoint = checkpoint
     document.page_count = len(done) or len(pages)
     document.page_count_estimate = document.page_count
+    logger.info("job %s etapa gravação fim páginas=%s", job.id, document.page_count)
     _step(session, job, "ocr", "done", f"{document.page_count} página(s) reconhecidas.")
 
 
@@ -347,6 +558,85 @@ def _image_page(path: Path, languages: list[str]) -> dict:
         "formulas": [],
         "images": [],
     }
+
+
+def straighten_stored_pages(session, document: Document, languages: list[str] | None = None) -> bool:
+    """Reler uma folha salva de cabeça para baixo e juntar palavras partidas por hífen."""
+    from cpmh_backend.services.ocr import polish_ocr_text, recognize
+
+    pages = session.scalars(select(DocumentPage).where(DocumentPage.document_id == document.id)).all()
+    revised = set(
+        session.scalars(select(RegionRevision.region_id).where(RegionRevision.document_id == document.id)).all()
+    )
+    changed = False
+    for page in pages:
+        regions = session.scalars(
+            select(OCRRegion).where(OCRRegion.page_id == page.id, OCRRegion.deleted.is_(False))
+        ).all()
+        if any(region.id in revised or (region.original_text and region.text != region.original_text) for region in regions):
+            continue
+        confidences = [float(region.confidence or 0) for region in regions if region.text]
+        mean = sum(confidences) / len(confidences) if confidences else 0
+        image_path = Path(page.image_path or "")
+        meta = dict(page.metadata_json or {})
+        if mean < 75 and image_path.is_file() and not meta.get("orientation_checked"):
+            image = Image.open(image_path)
+            _prepared, angle = _rotate_for_repair(image)
+            meta["orientation_checked"] = True
+            page.metadata_json = meta
+            changed = True
+            if angle:
+                blocks, prepared, _notes = recognize(image, languages)
+                classify_blocks(blocks)
+                session.execute(delete(OCRRegion).where(OCRRegion.page_id == page.id))
+                prepared.save(image_path, format="PNG")
+                page.width, page.height = prepared.size
+                page.sha256 = sha256_file(image_path)
+                for block in reading_order(blocks):
+                    session.add(
+                        OCRRegion(
+                            id=new_id(),
+                            page_id=page.id,
+                            document_id=document.id,
+                            category=block.category if block.category else "unknown",
+                            text=block.text,
+                            confidence=float(block.confidence or 0),
+                            x=block.bbox[0],
+                            y=block.bbox[1],
+                            w=block.bbox[2],
+                            h=block.bbox[3],
+                            language=block.language or detect_language(block.text),
+                            review_state="pending",
+                            original_text=block.text,
+                            original_category=block.category,
+                            original_x=block.bbox[0],
+                            original_y=block.bbox[1],
+                            original_w=block.bbox[2],
+                            original_h=block.bbox[3],
+                            source=block.source,
+                            evidence=block.notes or "",
+                            deleted=False,
+                            created_at=utcnow(),
+                            updated_at=utcnow(),
+                        )
+                    )
+                changed = True
+                continue
+        for region in regions:
+            cleaned = polish_ocr_text(region.text or "")
+            if cleaned == region.text:
+                continue
+            if not region.original_text or region.original_text == region.text:
+                region.original_text = cleaned
+            region.text = cleaned
+            changed = True
+    return changed
+
+
+def _rotate_for_repair(image: Image.Image) -> tuple[Image.Image, int]:
+    from cpmh_backend.services.ocr import _rotate_right_angles
+
+    return _rotate_right_angles(image)
 
 
 def _store_page(session, document, page: dict, folder: Path, source_url: str) -> None:
@@ -425,7 +715,7 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
         block.language = region.language
         session.add(region)
     table = page.get("table")
-    if table:
+    if isinstance(table, dict) and table:
         crop_path = ""
         if image is not None and table.get("bbox"):
             from cpmh_backend.hashing import crop_normalized
@@ -453,6 +743,8 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
             )
         )
     for image_info in page.get("images") or []:
+        if not isinstance(image_info, dict) or image_info.get("image") is None or not image_info.get("bbox"):
+            continue
         asset = image_info["image"]
         filename = f"imagem-{page['sequence']:04d}-{new_id()[:8]}.png"
         asset_path = folder / "images" / filename
@@ -479,6 +771,8 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
             )
         )
     for formula in page.get("formulas") or []:
+        if not isinstance(formula, dict) or formula.get("block") is None:
+            continue
         block = formula["block"]
         crop = formula.get("crop")
         crop_path = ""
@@ -501,13 +795,68 @@ def _store_page(session, document, page: dict, folder: Path, source_url: str) ->
         )
 
 
+def _export_text(region, counts=None) -> str:
+    from cpmh_backend.services.ocr import polish_ocr_text
+    from cpmh_backend.services.ocr_repair import repair_identifiers
+
+    text = region.text or ""
+    if region.original_text and region.text != region.original_text:
+        return text  # texto editado pelo revisor nunca é mexido
+    polished = polish_ocr_text(text)
+    if counts is not None and region.source == "ocr":
+        polished = repair_identifiers(polished, counts)
+    return polished
+
+
+def _replace_page_grid(session, document: Document, page: DocumentPage, blocks: list[Block], by_identity: dict[int, object]) -> set[str]:
+    """Troca parágrafos embaralhados de uma grelha por uma tabela, se a página for uma."""
+    grid = grid_from_blocks(blocks)
+    existing = session.scalars(
+        select(TableRecord).where(TableRecord.document_id == document.id, TableRecord.page_sequence == page.sequence)
+    ).all()
+    if grid is None:
+        return set()
+    if any(item.review_state == "reviewed" for item in existing):
+        return set()
+    for item in existing:
+        session.delete(item)
+    session.add(
+        TableRecord(
+            id=new_id(),
+            document_id=document.id,
+            page_ids=[page.id],
+            rows=grid.rows,
+            confidence=grid.confidence,
+            image_path="",
+            review_state="pending",
+            reliable=True,
+            notes="Grelha de colunas alinhadas.",
+            x=grid.bbox[0],
+            y=grid.bbox[1],
+            w=grid.bbox[2],
+            h=grid.bbox[3],
+            page_sequence=page.sequence,
+        )
+    )
+    return {by_identity[identity].id for identity in grid.consumed if identity in by_identity}
+
+
 def _rebuild_elements(session, document: Document) -> None:
     session.execute(delete(DocumentElement).where(DocumentElement.document_id == document.id))
     pages = session.scalars(
         select(DocumentPage).where(DocumentPage.document_id == document.id).order_by(DocumentPage.sequence)
     ).all()
+    from cpmh_backend.intelligence import NON_BODY_KINDS, heading_depth
+    from cpmh_backend.services.ocr import polish_ocr_text
+    from cpmh_backend.services.ocr_repair import identifier_counts
+
+    every_region = session.scalars(
+        select(OCRRegion).where(OCRRegion.document_id == document.id, OCRRegion.deleted.is_(False))
+    ).all()
+    counts = identifier_counts([polish_ocr_text(region.text or "") for region in every_region])
     pieces: list[FlowPiece] = []
     order = 0
+    body_order = 0  # conta só o corpo: cabeçalho, rodapé e ruído não separam um parágrafo do seguinte
     for page in pages:
         regions = session.scalars(
             select(OCRRegion).where(OCRRegion.page_id == page.id, OCRRegion.deleted.is_(False))
@@ -516,7 +865,7 @@ def _rebuild_elements(session, document: Document) -> None:
         by_identity: dict[int, OCRRegion] = {}
         for region in regions:
             block = Block(
-                text=region.text,
+                text=_export_text(region, counts),
                 bbox=(region.x, region.y, region.w, region.h),
                 confidence=region.confidence,
                 category=region.category or "paragraph",
@@ -524,20 +873,36 @@ def _rebuild_elements(session, document: Document) -> None:
             )
             blocks.append(block)
             by_identity[id(block)] = region
+        consumed = _replace_page_grid(session, document, page, blocks, by_identity)
         for block in reading_order(blocks):
             region = by_identity[id(block)]
+            if region.id in consumed:
+                continue
             element_id = new_id()
+            shown = _export_text(region, counts)
+            if region.category == "title":
+                level = 1
+            elif region.category == "subtitle":
+                level = min(max(heading_depth(shown), 1), 3) if heading_depth(shown) else 2
+            else:
+                level = 0
             element = DocumentElement(
                 id=element_id,
                 document_id=document.id,
                 kind=region.category or "paragraph",
                 order_index=order,
-                text=region.text,
+                text=shown,
                 confidence=region.confidence,
-                level=1 if region.category == "title" else (2 if region.category == "subtitle" else 0),
+                level=level,
                 page_ids=[page.id],
                 region_ids=[region.id],
-                metadata_json={"page_sequence": page.sequence, "evidence": region.evidence or ""},
+                metadata_json={
+                    "page_sequence": page.sequence,
+                    "evidence": region.evidence or "",
+                    "y": region.y,
+                    "x": region.x,
+                    "w": region.w,
+                },
                 skip_export=False,
             )
             session.add(element)
@@ -546,12 +911,15 @@ def _rebuild_elements(session, document: Document) -> None:
                     FlowPiece(
                         id=element_id,
                         kind=region.category,
-                        text=region.text,
+                        text=shown,
                         page_index=page.sequence,
                         bbox=(region.x, region.y, region.w, region.h),
+                        order=body_order,
                     )
                 )
             order += 1
+            if region.category not in NON_BODY_KINDS:
+                body_order += 1
     session.flush()
     link_page_continuity(pieces)
     for piece in pieces:
@@ -688,8 +1056,22 @@ def _clear_working_files(session, document: Document, folder: Path) -> None:
         target.mkdir(parents=True, exist_ok=True)
 
 
-def _stage(session, job, document, stage: str, progress: float) -> bool:
+def _release_db(session) -> None:
+    """Encerra a transação antes de rede, navegador ou PDF.
+
+    O SQLite só deixa uma escrita por vez. Segurar a transação durante o
+    download faz o botão Extrair responder 500.
+    """
+    session.commit()
+
+
+def _reload_job(session, job) -> None:
+    session.commit()
     session.refresh(job)
+
+
+def _stage(session, job, document, stage: str, progress: float) -> bool:
+    _reload_job(session, job)
     if job.state in {"paused", "cancelled"}:
         return False
     job.state = stage
@@ -702,12 +1084,12 @@ def _stage(session, job, document, stage: str, progress: float) -> bool:
 
 
 def _stopped(session, job) -> bool:
-    session.refresh(job)
+    _reload_job(session, job)
     return job.state in {"paused", "cancelled"}
 
 
 def _finish(session, job, document, state: str, message: str) -> None:
-    session.refresh(job)
+    _reload_job(session, job)
     if job.state in {"paused", "cancelled"}:
         return
     job.state = "completed" if state in {"completed", "awaiting_review", "inconclusive"} else state

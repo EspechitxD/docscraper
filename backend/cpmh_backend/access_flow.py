@@ -5,7 +5,12 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 
+from urllib.parse import urlsplit
+
 from cpmh_backend.models import AccessEvent, utcnow
+from cpmh_backend import vpn
+from cpmh_backend.network import redact_proxy
+from cpmh_backend.recovery import annotate
 
 SESSION_TTL = dt.timedelta(minutes=30)
 
@@ -14,12 +19,14 @@ def partition_name(project_id: str, job_id: str) -> str:
     return f"persist:cpmh-{project_id}-{job_id}"
 
 
-def remember(session, job, document, verdict: dict, *, source: str) -> dict:
+def remember(session, job, document, verdict: dict | None, *, source: str, operator: str = "", proxy: str = "") -> dict:
+    verdict = annotate(verdict if isinstance(verdict, dict) else {})
+    proxy_label = redact_proxy(proxy) if proxy else vpn.audit_label()
     checkpoint = dict(job.checkpoint or {})
     access = dict(checkpoint.get("access") or {})
-    attempts = list(access.get("attempts") or [])
+    attempts = [item for item in list(access.get("attempts") or []) if isinstance(item, dict)]
     last = attempts[-1] if attempts else {}
-    same = last.get("state") == verdict["state"] and last.get("url") == (verdict.get("final_url") or verdict.get("url")) and last.get("source") == source
+    same = last.get("state") == verdict.get("state") and last.get("url") == (verdict.get("final_url") or verdict.get("url")) and last.get("source") == source
     duplicate = bool(same and job.state == "paused" and source == "capture")
     if not duplicate:
         attempts.append(
@@ -28,11 +35,15 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
                 "provider": verdict.get("provider") or "none",
                 "url": (verdict.get("final_url") or verdict.get("url") or "")[:500],
                 "source": source,
+                "operator": operator[:80],
+                "proxy": proxy_label,
+                "mechanism": verdict.get("mechanism") or "",
+                "action": verdict.get("action") or "",
                 "at": utcnow().isoformat(),
             }
         )
-    repeated = [item for item in attempts if item["state"] not in {"", "ACCESS_GRANTED"}]
-    persistent = len(repeated) >= 3 and verdict["state"] != "ACCESS_GRANTED"
+    repeated = [item for item in attempts if item.get("state") not in {"", "ACCESS_GRANTED"}]
+    persistent = len(repeated) >= 3 and verdict.get("state") != "ACCESS_GRANTED"
     cleared = verdict["state"] == "ACCESS_GRANTED" and source == "recheck"
     access.update(
         {
@@ -40,7 +51,7 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
             "provider": verdict.get("provider") or "none",
             "confidence": verdict.get("confidence") or 0,
             "evidence": list(verdict.get("evidence") or [])[:8],
-            "message": verdict.get("message") or "",
+            "message": verdict.get("message") or verdict.get("action") or "A captura foi pausada.",
             "url": (verdict.get("url") or "")[:500],
             "final_url": (verdict.get("final_url") or "")[:500],
             "cleared": cleared,
@@ -48,6 +59,14 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
             "persistent": persistent,
             "attempts": attempts[-12:],
             "partition": partition_name(document.project_id, job.id),
+            "mechanism": verdict.get("mechanism") or "",
+            "method": verdict.get("method") or "",
+            "action": verdict.get("action") or "",
+            "alternative": verdict.get("alternative"),
+            "domain": (urlsplit(verdict.get("final_url") or verdict.get("url") or document.url or "").hostname or ""),
+            "attempts_made": verdict.get("attempts_made") or len(attempts),
+            "operator": operator[:80],
+            "proxy": proxy_label,
         }
     )
     if not cleared:
@@ -57,7 +76,7 @@ def remember(session, job, document, verdict: dict, *, source: str) -> dict:
         document.error_message = ""
     checkpoint["access"] = access
     job.checkpoint = checkpoint
-    if verdict["state"] != "ACCESS_GRANTED":
+    if verdict.get("state") != "ACCESS_GRANTED":
         job.state = "paused"
         job.stage = "capturing"
         job.error = access["message"][:500]

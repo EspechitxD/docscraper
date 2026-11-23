@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, isApiError } from "../api";
 import { Button, Notice } from "../components/ui";
+import { WebDocumentDiagnosis } from "../components/WebDocumentDiagnosis";
 import { formatBytes, formatWhen } from "../labels";
 
 type Report = Record<string, unknown> & {
@@ -12,8 +13,8 @@ type Report = Record<string, unknown> & {
   database?: { ok?: boolean; message?: string } | string;
   disk_free_bytes?: number;
   disk_total_bytes?: number;
-  tesseract?: { installed?: boolean; version?: string; missing?: string[] };
-  browser?: { playwright?: boolean; chrome?: boolean; chrome_path?: string };
+  tesseract?: { installed?: boolean; version?: string; missing?: string[]; path?: string; hint?: string };
+  browser?: { playwright?: boolean; chrome?: boolean; chrome_path?: string; browser_name?: string };
   translation?: { argos_en_pt?: boolean; argos_zh_pt?: boolean };
   windows_installer_tested?: boolean;
   recent_errors?: { id: string; message: string; category: string; created_at: string }[];
@@ -88,15 +89,18 @@ export function DiagnosticsScreen() {
             <span>Dados</span><strong className="mono">{report.data_dir}</strong>
             <span>Disco livre</span><strong>{formatBytes(report.disk_free_bytes)} de {formatBytes(report.disk_total_bytes)}</strong>
             <span>Tesseract</span><strong>{report.tesseract?.installed ? report.tesseract.version : "ausente"}</strong>
+            <span>Tesseract (caminho)</span><strong className="mono">{report.tesseract?.path || "não encontrado"}</strong>
+            {report.tesseract?.hint && <><span>Como corrigir</span><strong>{report.tesseract.hint}</strong></>}
             <span>Idiomas faltantes</span><strong>{report.tesseract?.missing?.length ? report.tesseract.missing.join(", ") : "nenhum dos quatro prioritários"}</strong>
             <span>Playwright</span><strong>{report.browser?.playwright ? "importável" : "ausente"}</strong>
-            <span>Chrome</span><strong>{report.browser?.chrome ? report.browser.chrome_path : "não encontrado"}</strong>
+            <span>Navegador</span><strong>{report.browser?.chrome ? `${report.browser.browser_name || "Chromium"}: ${report.browser.chrome_path}` : "não encontrado (instale o Chrome ou use o Edge)"}</strong>
             <span>Argos en→pt</span><strong>{report.translation?.argos_en_pt ? "sim" : "não instalado"}</strong>
             <span>Argos zh→pt</span><strong>{report.translation?.argos_zh_pt ? "sim" : "não instalado"}</strong>
             <span>Instalador Windows testado</span><strong>{report.windows_installer_tested ? "sim" : "não"}</strong>
           </div>
         </section>
       )}
+      <WebDocumentDiagnosis />
       <section className="panel" style={{ marginTop: 14 }}>
         <h2>Últimos registros</h2>
         <div className="table-wrap">

@@ -56,6 +56,37 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.text()) as T;
 }
 
+export async function apiDownload(path: string, init: RequestInit = {}): Promise<{ blob: Blob; filename: string }> {
+  const headers = new Headers(init.headers);
+  headers.set("X-CPMH-Token", token);
+  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${apiBase}/api${path}`, { ...init, headers });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const blob = await response.blob();
+  return { blob, filename: filenameFromDisposition(response.headers.get("content-disposition") || "", blob.type) };
+}
+
+function filenameFromDisposition(header: string, blobType: string): string {
+  const encoded = /filename\*=(?:UTF-8''|utf-8'')([^;]+)/i.exec(header);
+  if (encoded?.[1]) {
+    try {
+      return decodeURIComponent(encoded[1].trim().replace(/"/g, ""));
+    } catch {
+      return encoded[1].trim();
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const plain = /filename=([^;]+)/i.exec(header);
+  if (plain?.[1]) return plain[1].trim().replace(/^"|"$/g, "");
+  const ext = blobType.includes("pdf") ? "pdf" : blobType.includes("json") ? "json" : blobType.includes("zip") ? "zip" : blobType.startsWith("text/") ? "txt" : "docx";
+  return `documento.${ext}`;
+}
+
 export async function apiBlob(path: string): Promise<Blob> {
   const response = await fetch(`${apiBase}/api${path}`, { headers: { "X-CPMH-Token": token } });
   if (!response.ok) {
