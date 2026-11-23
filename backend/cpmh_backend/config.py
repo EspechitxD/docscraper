@@ -32,7 +32,11 @@ class Settings(BaseModel):
     allow_local_network: bool = False
     static_dir: Path | None = None
     log_level: str = "INFO"
-    install_dir: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2])
+    install_dir: Path = Field(
+        default_factory=lambda: Path(sys.executable).parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parents[2]
+    )
 
     @property
     def database_path(self) -> Path:

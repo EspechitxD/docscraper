@@ -201,6 +201,13 @@ def test_digital_manual_pipeline(client, tmp_path):
     assert (out / "Manual_Tecnico (2).docx").exists()
     pdf_text = "\n".join(page.extract_text() or "" for page in PdfReader(out / "Manual_Tecnico.pdf").pages)
     assert "ancoragem" in pdf_text.lower()
+    downloaded = client.post(
+        f"/api/documents/{document['id']}/export/download",
+        json={"formats": ["docx"], "mode": "editable", "output_name": "Manual_Tecnico"},
+    )
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content.startswith(b"PK")
+    assert "attachment" in downloaded.headers.get("content-disposition", "")
 
 
 def test_split_paragraph_and_columns(client, tmp_path):

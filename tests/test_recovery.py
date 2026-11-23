@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import io
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from reportlab.pdfgen import canvas
 
 from cpmh_backend.access import classify
 from cpmh_backend.errors import AccessPaused
+from cpmh_backend.models import as_utc_iso
 from cpmh_backend.recovery import (
     clear_recovery_state,
+    declared_pdf,
     domain_slot,
     managed_fetch,
     public_alternative,
@@ -18,6 +23,7 @@ from cpmh_backend.recovery import (
     robots_allows,
     timeout_for,
 )
+from cpmh_backend.services.capture import _blocks_from_dom, browser_snapshot
 from cpmh_backend.services.pipeline import run_job
 
 
@@ -263,3 +269,86 @@ def test_network_failure_stops_after_three_attempts():
         )
     assert caught.value.verdict["state"] == "NAVIGATION_ERROR"
     assert len(trace) == 3
+
+
+def _pdf_bytes() -> bytes:
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer)
+    pdf.drawString(72, 720, "Artigo publico de teste")
+    pdf.save()
+    return buffer.getvalue()
+
+
+def test_clock_uses_utc_and_empty_browser_snapshot_is_ignored():
+    naive = datetime(2026, 11, 20, 15, 18, 0)
+    assert as_utc_iso(naive) == "2026-11-20T15:18:00Z"
+    aware = datetime(2026, 11, 20, 15, 18, tzinfo=timezone.utc)
+    assert as_utc_iso(aware) == "2026-11-20T15:18:00Z"
+    assert browser_snapshot(None) is None
+    assert browser_snapshot("pagina") is None
+    assert _blocks_from_dom(None, (20, 20)) == []
+    blocks = _blocks_from_dom(
+        {"width": 100, "height": 100, "nodes": [None, {"text": "Oi", "tag": "P", "x": 1, "y": 2, "w": 10, "h": 8}]},
+        (100, 100),
+    )
+    assert [block.text for block in blocks] == ["Oi"]
+    paused = AccessPaused(None)
+    assert paused.verdict["state"] == "UNKNOWN_BLOCK"
+    assert "vazia" in paused.verdict["message"]
+
+
+def test_declared_pdf_is_extracted_and_the_clock_is_kept(client):
+    pdf = _pdf_bytes()
+    html = """<!doctype html><html><head>
+<meta name="citation_pdf_url" content="/artigo.pdf">
+<title>Artigo</title></head><body><p>Resumo na pagina</p></body></html>"""
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if self.path.startswith("/artigo.pdf"):
+                body = pdf
+                ctype = "application/pdf"
+            elif self.path.startswith("/robots.txt"):
+                body = b"User-agent: *\nDisallow:\n"
+                ctype = "text/plain"
+            else:
+                body = html.encode()
+                ctype = "text/html"
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format, *_args):
+            return
+
+    assert declared_pdf('<a href="/outro.pdf">pdf</a>', "http://exemplo.test/artigo") is None
+    server = _server(Handler)
+    port = server.server_address[1]
+    try:
+        client.put("/api/preferences", json={"values": {"allow_local_network": True, "max_pages": 2}})
+        project = client.post("/api/projects", json={"name": "PDF declarado"}).json()
+        added = client.post(
+            f"/api/projects/{project['id']}/documents",
+            json={"url": f"http://127.0.0.1:{port}/artigo"},
+        )
+        assert added.status_code == 200, added.text
+        document_id = added.json()["document"]["id"]
+        assert added.json()["document"]["added_at"].endswith("Z")
+        job = client.post(f"/api/documents/{document_id}/jobs", json={}).json()
+        run_job(job["id"])
+        current = client.get(f"/api/jobs/{job['id']}").json()
+        document = client.get(f"/api/documents/{document_id}").json()
+        assert current["state"] == "completed", current
+        assert current["attempts"] == 1
+        assert current["started_at"].endswith("Z")
+        assert current["finished_at"].endswith("Z")
+        assert "AttributeError" not in (current["error"] or "")
+        assert document["source_kind"] == "pdf"
+        elements = client.get(f"/api/documents/{document_id}/elements").json()
+        text = " ".join(item["text"] for item in elements)
+        assert "Artigo publico" in text
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -24,8 +24,12 @@ CATEGORIES = (
     "reference",
     "equation",
     "diagram",
+    "noise",
     "unknown",
 )
+
+# Categorias que ficam fora do corpo exportado.
+NON_BODY_KINDS = frozenset({"header", "footer", "page_number", "noise"})
 
 TRADITIONAL_MARKERS = set(
     "醫國書東車門長頭體學電對過還這時開個會說現發點線經當應種樣關問動員機給實業產義親歷條達選適節鐵題藥術與為來們從鈦廣漢語"
@@ -155,7 +159,70 @@ def _norm_key(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
-_NUMBERED_HEADING = re.compile(r"^\d+(?:\.\d+){0,3}\s+\S")
+_NUMBERED_HEADING = re.compile(r"^(\d+(?:\.\d+){0,5})\.?\s+(\S)")
+_DANGLING_END = re.compile(
+    r"\b(?:and|or|of|the|to|in|for|with|by|at|on|an|as|is|are|be|that|which|from|"
+    r"de|da|do|das|dos|e|ou|para|com|em|os|um|uma|que|se|por)$",
+    re.IGNORECASE,
+)
+_STRAY_MARK = re.compile(r"(?<=[A-Za-z0-9\)])[!|¦]+$")
+
+
+def heading_depth(text: str) -> int:
+    """Profundidade da numeração: '1.' = 1, '1.2' = 2, '7.3.5.1' = 4, sem número = 0."""
+    match = _NUMBERED_HEADING.match(text.strip())
+    if not match:
+        return 0
+    return match.group(1).count(".") + 1
+
+
+def looks_like_fragment(text: str) -> bool:
+    """Pedaço de frase que o OCR ou a quebra de coluna deixou solto. Nunca é título."""
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.endswith(("-", "\u2010", ",", "\u2014", "\u2013")):
+        return True
+    if stripped[0].islower():
+        return True
+    if len(stripped.split()) > 3 and _DANGLING_END.search(stripped):
+        return True
+    return False
+
+
+def clean_heading_text(text: str) -> str:
+    """Tira o '!' ou '|' que o OCR cria no lugar da nota sobrescrita colada ao fim do título."""
+    return _STRAY_MARK.sub("", text.strip()).strip()
+
+
+def _heading_shape(text: str, *, max_words: int = 14) -> bool:
+    return len(text.split()) <= max_words and not looks_like_fragment(text)
+
+
+def is_noise_block(text: str, confidence: float, source: str) -> bool:
+    """Resto de figura ou de carimbo que o OCR leu como texto. Só vale para OCR."""
+    if source != "ocr":
+        return False
+    stripped = text.strip()
+    compact = "".join(stripped.split())
+    if not compact:
+        return True
+    letters = sum(1 for char in compact if char.isalpha())
+    digits = sum(1 for char in compact if char.isdigit())
+    if confidence < 50 and len(compact) <= 100:
+        return True
+    if len(compact) <= 3 and confidence < 80 and digits == 0:
+        return True
+    if len(compact) < 30 and (letters + digits) / len(compact) < 0.45:
+        return True
+    tokens = stripped.split()
+    if len(tokens) >= 4 and confidence < 70:
+        wordlike = sum(
+            1 for token in tokens if re.search(r"[aeiouyáéíóúãõâêôà]", token, re.I) and len(token) >= 2 or token.isdigit()
+        )
+        if wordlike / len(tokens) < 0.5:
+            return True
+    return False
 _BIBLIOGRAPHIC = re.compile(r"\b(?:19|20)\d{2}\b")
 _BIBLIOGRAPHIC_MARK = re.compile(r"\b(?:v\.|n\.|p\.)\b|doi\.org|https?://", re.IGNORECASE)
 
@@ -203,6 +270,11 @@ def classify_blocks(blocks: list[Block]) -> list[Block]:
             block.level = 0
             block.notes = "padrão de numeração de página"
             continue
+        if is_noise_block(text, block.confidence, block.source):
+            block.category = "noise"
+            block.level = 0
+            block.notes = "ruído de OCR: confiança baixa e pouco texto legível"
+            continue
         if _is_formula(text):
             block.category = "equation" if any(char in text for char in "∫∑∏√") else "formula"
             block.level = 0
@@ -224,10 +296,18 @@ def classify_blocks(blocks: list[Block]) -> list[Block]:
             block.category = "reference"
             block.notes = "padrão de referência"
             continue
-        numbered = bool(_NUMBERED_HEADING.match(text)) and len(text) <= 120 and not text.endswith(".")
+        numbered_match = _NUMBERED_HEADING.match(text)
+        numbered = bool(
+            numbered_match
+            and len(text) <= 120
+            and not text.endswith(".")
+            and _heading_shape(text, max_words=12)
+            and (numbered_match.group(2)[:1].isupper() or numbered_match.group(2)[:1].isdigit())
+        )
         if numbered:
             block.category = "subtitle"
-            block.level = 2
+            block.level = min(max(heading_depth(text), 1), 3)
+            block.text = clean_heading_text(text)
             block.notes = "numeração de seção"
             continue
         ends_sentence = text.endswith((".", ";", ":"))
@@ -241,15 +321,25 @@ def classify_blocks(blocks: list[Block]) -> list[Block]:
             and height >= largest * 0.92
             and height >= reference * 1.25
         )
-        if clearly_larger or dominant:
+        shaped = _heading_shape(text, max_words=40)
+        if (clearly_larger or dominant) and shaped:
             block.category = "title"
             block.level = 1
+            block.text = clean_heading_text(text)
             block.notes = "fonte maior que o corpo" + ("; centralizado" if centered else "")
             continue
-        if height >= reference * 1.12 and len(text) <= 120 and not text.endswith(".") and y < 0.7:
+        font_step = 1.28 if block.source == "ocr" else 1.12  # a altura de tinta do OCR oscila mais
+        if (
+            height >= reference * font_step
+            and len(text) <= 120
+            and not text.endswith(".")
+            and y < 0.7
+            and _heading_shape(text, max_words=14)
+        ):
             block.category = "subtitle"
             block.level = 2
-            block.notes = "numeração de seção" if numbered else "fonte intermediária"
+            block.text = clean_heading_text(text)
+            block.notes = "fonte intermediária"
             continue
         if len(text) < 8 and not text:
             block.category = "unknown"
@@ -259,6 +349,21 @@ def classify_blocks(blocks: list[Block]) -> list[Block]:
         block.level = 0
         block.notes = "texto corrido"
     return blocks
+
+
+def demote_open_headings(ordered: list[Block]) -> None:
+    """Título que na verdade é a primeira linha de uma cláusula que continua na coluna seguinte.
+
+    Se o bloco seguinte, na ordem de leitura, começa em minúscula, a frase não terminou.
+    """
+    body = [block for block in ordered if block.category not in NON_BODY_KINDS]
+    for current, following in zip(body, body[1:]):
+        if current.category != "subtitle" or current.text.rstrip().endswith(":"):
+            continue
+        if following.category in {"paragraph", "running_text"} and following.text[:1].islower():
+            current.category = "paragraph"
+            current.level = 0
+            current.notes = "primeira linha de uma frase que continua no bloco seguinte"
 
 
 def mark_repeated_chrome(pages: list[list[Block]]) -> None:
@@ -316,25 +421,104 @@ def reading_order(blocks: list[Block]) -> list[Block]:
 
 
 def _order_body(body: list[Block]) -> list[Block]:
-    if len(body) < 2:
-        return list(body)
-    lefts = sorted(block.bbox[0] for block in body)
-    groups: list[list[float]] = []
-    for value in lefts:
-        if not groups or value - groups[-1][-1] > 0.15:
-            groups.append([value])
-        else:
-            groups[-1].append(value)
-    substantial = [group for group in groups if len(group) >= 2]
-    if len(substantial) >= 2:
-        boundary = (max(substantial[0]) + min(substantial[1])) / 2
-        left = [block for block in body if (block.bbox[0] + block.bbox[2] / 2) < boundary]
-        right = [block for block in body if block not in left]
-        if left and right:
-            left.sort(key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
-            right.sort(key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
-            return left + right
-    return sorted(body, key=lambda block: (round(block.bbox[1], 3), block.bbox[0]))
+    from cpmh_backend.layout import order_by_zones
+
+    return order_by_zones(body)
+
+
+@dataclass
+class TextGrid:
+    rows: list[list[str]]
+    bbox: tuple[float, float, float, float]
+    confidence: float
+    consumed: set[int]
+
+
+def grid_from_blocks(blocks: list[Block]) -> TextGrid | None:
+    """Monta uma grelha quando a página tem três colunas estreitas alinhadas.
+
+    Texto corrido em duas colunas largas continua na ordem da coluna.
+    """
+    body = [
+        block
+        for block in blocks
+        if block.category not in {"header", "footer", "page_number"}
+        and block.text.strip()
+        and 0.055 < block.bbox[1] < 0.93
+    ]
+    if len(body) < 8:
+        return None
+    centers = _cluster_values([block.bbox[0] for block in body], gap=0.16)
+    columns: list[tuple[float, list[Block]]] = []
+    for center in centers:
+        members = [block for block in body if abs(block.bbox[0] - center) <= 0.12]
+        if len(members) >= 4:
+            columns.append((center, members))
+    if len(columns) < 3:
+        return None
+    widths = [block.bbox[2] for block in body if block.bbox[2] > 0]
+    if not widths or statistics.median(widths) > 0.30:
+        return None
+    first = columns[0][1]
+    aligned = 0
+    for block in first:
+        if all(
+            any(abs(block.bbox[1] - other.bbox[1]) <= 0.014 for other in members)
+            for _center, members in columns[1:]
+        ):
+            aligned += 1
+    if aligned < max(3, int(len(first) * 0.4)):
+        return None
+    starts: list[float] = []
+    for block in sorted(first, key=lambda item: item.bbox[1]):
+        shares = any(
+            abs(block.bbox[1] - other.bbox[1]) <= 0.014
+            for _center, members in columns[1:]
+            for other in members
+        )
+        if shares and (not starts or block.bbox[1] - starts[-1] > 0.012):
+            starts.append(block.bbox[1])
+    if len(starts) < 3:
+        return None
+    edges = [center for center, _members in columns]
+    bounds = [0.0]
+    for left, right in zip(edges, edges[1:]):
+        bounds.append((left + right) / 2)
+    bounds.append(1.0)
+    rows = [[""] * (len(bounds) - 1) for _ in starts]
+    consumed: set[int] = set()
+    for block in sorted(body, key=lambda item: (item.bbox[1], item.bbox[0])):
+        if block.bbox[1] + 0.008 < starts[0]:
+            continue
+        row_index = 0
+        for index, start in enumerate(starts):
+            if block.bbox[1] + 0.008 >= start:
+                row_index = index
+        center = block.bbox[0] + block.bbox[2] / 2
+        column = len(bounds) - 2
+        for position, edge in enumerate(bounds[1:]):
+            if center <= edge:
+                column = position
+                break
+        text = " ".join(block.text.split())
+        current = rows[row_index][column]
+        rows[row_index][column] = f"{current} {text}".strip() if current else text
+        consumed.add(id(block))
+    rows = [row for row in rows if any(cell.strip() for cell in row)]
+    if len(rows) < 3 or not consumed:
+        return None
+    used = [block for block in body if id(block) in consumed]
+    x = min(block.bbox[0] for block in used)
+    y = min(block.bbox[1] for block in used)
+    right = max(block.bbox[0] + block.bbox[2] for block in used)
+    bottom = max(block.bbox[1] + block.bbox[3] for block in used)
+    confidence = statistics.fmean(block.confidence or 0 for block in used)
+    return TextGrid(
+        rows=rows,
+        bbox=(x, y, max(right - x, 0.01), max(bottom - y, 0.01)),
+        confidence=round(confidence, 2),
+        consumed=consumed,
+    )
 
 
 def lines_from_words(words: list[WordBox]) -> list[list[WordBox]]:
@@ -529,14 +713,27 @@ class FlowPiece:
     skip: bool = False
     continued_from: str | None = None
     continued_in: str | None = None
+    order: int | None = None
+
+
+def _next_column(previous: FlowPiece, nxt: FlowPiece) -> bool:
+    """O parágrafo seguinte abre outra coluna da mesma página: mais à direita e mais acima."""
+    return (
+        nxt.page_index == previous.page_index
+        and nxt.bbox[0] > previous.bbox[0] + 0.15
+        and nxt.bbox[1] < previous.bbox[1]
+    )
 
 
 def link_page_continuity(pieces: list[FlowPiece]) -> list[FlowPiece]:
+    """Liga o parágrafo que termina aberto ao que continua na página ou na coluna seguinte."""
     candidates = [piece for piece in pieces if piece.kind in {"paragraph", "running_text"}]
     for previous, nxt in zip(candidates, candidates[1:]):
         if previous.skip or nxt.skip:
             continue
-        if nxt.page_index != previous.page_index + 1:
+        if previous.order is not None and nxt.order is not None and nxt.order != previous.order + 1:
+            continue  # há título, tabela ou figura no meio: não é continuação
+        if not (nxt.page_index == previous.page_index + 1 or _next_column(previous, nxt)):
             continue
         left = previous.text.rstrip()
         right = nxt.text.lstrip()
@@ -546,10 +743,9 @@ def link_page_continuity(pieces: list[FlowPiece]) -> list[FlowPiece]:
         open_sentence = not left.endswith((".", "?", "!", "。", "！", "？", ";", ":"))
         continues_lower = right[:1].islower()
         if hyphenated or (open_sentence and continues_lower):
-            if hyphenated:
-                previous.text = left[:-1] + right
-            else:
-                previous.text = left + " " + right
+            from cpmh_backend.layout import join_lines
+
+            previous.text = join_lines(left, right)
             previous.continued_in = nxt.id
             nxt.continued_from = previous.id
             nxt.skip = True
@@ -735,39 +931,25 @@ def blocks_from_pdf_chars(chars: list[dict], page_width: float, page_height: flo
                 words=words,
             )
         )
-    paragraphs: list[Block] = []
+    # Ponto, vírgula ou dois-pontos sozinhos na mesma faixa voltam para a linha anterior.
+    glued: list[Block] = []
     for line in line_blocks:
-        if paragraphs:
-            previous = paragraphs[-1]
-            gap = line.bbox[1] - (previous.bbox[1] + previous.bbox[3])
-            same_column = abs(line.bbox[0] - previous.bbox[0]) < 0.08
-            same_size = abs(line.font_size - previous.font_size) <= max(previous.font_size, 0.001) * 0.25
-            same_band = abs(line.bbox[1] - previous.bbox[1]) < 0.02
-            if line.text.strip() in {".", ",", ";", ":", "?", "!"} and same_band:
-                previous.text = (previous.text + line.text.strip()).strip()
-                x = min(previous.bbox[0], line.bbox[0])
-                right = max(previous.bbox[0] + previous.bbox[2], line.bbox[0] + line.bbox[2])
-                bottom = line.bbox[1] + line.bbox[3]
-                previous.bbox = (x, previous.bbox[1], right - x, bottom - previous.bbox[1])
-                previous.words.extend(line.words)
-                continue
-            if (
-                gap < max(line.font_size, 0.01) * 0.85
-                and same_column
-                and same_size
-                and not _is_formula(line.text)
-                and not _is_formula(previous.text)
-            ):
-                previous.text = (previous.text + " " + line.text).strip()
-                x = min(previous.bbox[0], line.bbox[0])
-                y = previous.bbox[1]
-                right = max(previous.bbox[0] + previous.bbox[2], line.bbox[0] + line.bbox[2])
-                bottom = line.bbox[1] + line.bbox[3]
-                previous.bbox = (x, y, right - x, bottom - y)
-                previous.words.extend(line.words)
-                continue
-        paragraphs.append(line)
-    return paragraphs
+        if glued and line.text.strip() in {".", ",", ";", ":", "?", "!"} and abs(line.bbox[1] - glued[-1].bbox[1]) < 0.02:
+            previous = glued[-1]
+            previous.text = (previous.text + line.text.strip()).strip()
+            x = min(previous.bbox[0], line.bbox[0])
+            right = max(previous.bbox[0] + previous.bbox[2], line.bbox[0] + line.bbox[2])
+            bottom = line.bbox[1] + line.bbox[3]
+            previous.bbox = (x, previous.bbox[1], right - x, bottom - previous.bbox[1])
+            previous.words.extend(line.words)
+            continue
+        glued.append(line)
+    from cpmh_backend.layout import lines_to_paragraphs
+
+    return lines_to_paragraphs(
+        glued,
+        keep_apart=lambda previous, line: _is_formula(line.text) or _is_formula(previous.text),
+    )
 
 
 def _words_from_line_items(items: list[dict], page_width: float, page_height: float) -> list[WordBox]:

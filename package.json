@@ -62,6 +62,10 @@
       {
         "from": "build/runtime",
         "to": "runtime"
+      },
+      {
+        "from": "dist/cpmh-backend",
+        "to": "backend"
       }
     ],
     "win": {

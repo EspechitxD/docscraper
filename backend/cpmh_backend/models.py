@@ -20,6 +20,17 @@ def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
+def as_utc_iso(value: dt.datetime | None) -> str | None:
+    """Horário UTC com sufixo Z. O SQLite devolve datetimes sem fuso."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=dt.timezone.utc)
+    else:
+        value = value.astimezone(dt.timezone.utc)
+    return value.isoformat().replace("+00:00", "Z")
+
+
 class Base(DeclarativeBase):
     pass
 

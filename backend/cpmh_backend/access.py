@@ -19,6 +19,12 @@ STATES = {
     "BROWSER_ERROR",
 }
 
+_SLIDER_PROMPT = re.compile(
+    r"(滑动验证|滑块验证|拖动.{0,8}滑块|请完成.{0,6}验证|安全验证|人机验证|"
+    r"slide to (?:verify|complete|unlock)|drag the slider|complete the (?:slider|security) (?:check|verification)|"
+    r"arraste o (?:controle deslizante|bot[ãa]o)|deslize para verificar|verifica[çc][ãa]o (?:de seguran[çc]a|deslizante))",
+    re.IGNORECASE,
+)
 _SECRET = re.compile(r"(?i)(cookie|set-cookie|authorization|sitekey|token|password)\s*[:=]\s*\S+")
 _LONG_TOKEN = re.compile(r"\b[A-Za-z0-9_\-]{40,}\b")
 
@@ -92,6 +98,12 @@ def classify(signals: dict) -> dict:
         return _verdict("CAPTCHA_DETECTED", widget, 0.93, url, final_url, evidence, status)
     if widget == "unknown":
         return _verdict("CAPTCHA_DETECTED", "unknown", 0.72, url, final_url, evidence, status)
+
+    # Verificação por controle deslizante ou quebra-cabeça, sem widget conhecido (comum em sites chineses).
+    # O texto visível diz o que fazer; só pausamos. Nunca arrastamos o controle.
+    if len(raw_text) < 2000 and _SLIDER_PROMPT.search(folded):
+        evidence.append("texto pedindo verificação por controle deslizante")
+        return _verdict("CAPTCHA_DETECTED", "slider", 0.9, url, final_url, evidence, status)
 
     cloudflare = _cloudflare_interstitial(folded, markers)
     if cloudflare or (challenge_url and _has(folded, "humano", "human", "verificar", "verify", "moment")):
@@ -225,6 +237,7 @@ def _message(state: str, provider: str) -> str:
         "turnstile": "Cloudflare Turnstile",
         "cloudflare_challenge": "verificação da Cloudflare",
         "unknown": "CAPTCHA não identificado",
+        "slider": "verificação por controle deslizante",
         "none": "restrição de acesso",
     }
     name = names.get(provider, "restrição de acesso")

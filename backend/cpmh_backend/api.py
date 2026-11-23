@@ -39,10 +39,13 @@ from cpmh_backend.models import (
     TableRecord,
     TranslationRecord,
     UserPreference,
+    as_utc_iso,
     utcnow,
 )
 from cpmh_backend.security import domain_of, normalize_url, safe_filename, validate_import_bytes, validate_url
 from cpmh_backend.services.diagnostics import summary
+from cpmh_backend.services.document_recovery import diagnose_url
+from cpmh_backend.services.document_report import build_document_report
 from cpmh_backend.services.glossary import export_terms_csv, import_terms
 from cpmh_backend.services.ocr import recognize
 from cpmh_backend.services.pipeline import new_id
@@ -139,7 +142,7 @@ class ExportIn(BaseModel):
     formats: list[str]
     mode: str = "editable"
     output_name: str
-    output_dir: str
+    output_dir: str = ""
     collision: str | None = None
     translate_mode: str = "none"
 
@@ -213,7 +216,7 @@ class ImageExportIn(BaseModel):
 
 
 def _dt(value):
-    return value.isoformat() if value else None
+    return as_utc_iso(value)
 
 
 def project_out(item: Project, db: Session) -> dict:
@@ -410,6 +413,27 @@ def diagnostics_backup(db: Session = Depends(get_db)):
     path = backup_now(get_settings())
     audit(db, "diagnostics", "Backup do banco criado.", {"path": path})
     return {"path": path}
+
+
+@router.post("/diagnostics/web-document", dependencies=[Depends(require_token)])
+def diagnostics_web_document(payload: UrlIn, db: Session = Depends(get_db)):
+    """Diagnóstico de uma página web: tipo de visualizador, fontes documentais e restrições."""
+    try:
+        validate_url(payload.url, allow_local=_network_allowed(db))
+    except UrlRejected as exc:
+        raise_app(exc)
+    report = diagnose_url(payload.url)
+    audit(db, "diagnostics", "Diagnóstico de documento web.", {"state": report.get("primary_state"), "host": domain_of(payload.url)})
+    return report
+
+
+@router.get("/documents/{document_id}/report", dependencies=[Depends(require_token)])
+def document_report(document_id: str, db: Session = Depends(get_db)):
+    """Páginas, caracteres e qualidade da extração, calculados do que foi realmente guardado."""
+    document = db.get(Document, document_id)
+    if document is None:
+        raise HTTPException(404, "Documento não encontrado.")
+    return build_document_report(db, document)
 
 
 @router.post("/security/validate-url", dependencies=[Depends(require_token)])
@@ -1348,14 +1372,14 @@ def delete_image(image_id: str, confirm: bool = False, db: Session = Depends(get
 def export_images(document_id: str, payload: ImageExportIn, db: Session = Depends(get_db)):
     import shutil
 
-    from cpmh_backend.security import assert_output_dir_allowed
+    from cpmh_backend.security import prepare_output_dir
     from cpmh_backend.services.exporting import resolve_output_path
 
     document = db.get(Document, document_id)
     if document is None:
         raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
     try:
-        destination = assert_output_dir_allowed(Path(payload.output_dir), install_dir=get_settings().install_dir)
+        destination = prepare_output_dir(payload.output_dir, install_dir=get_settings().install_dir)
     except AppError as exc:
         raise HTTPException(status_code=400, detail={"code": exc.code, "message": exc.message}) from exc
     rows = db.scalars(select(ImageAsset).where(ImageAsset.document_id == document_id)).all()
@@ -1495,6 +1519,50 @@ def export_route(document_id: str, payload: ExportIn, db: Session = Depends(get_
         raise_app(exc)
     audit(db, "export", "Documento exportado.", {"id": item.id, "formats": payload.formats})
     return {"files": files}
+
+
+_DOWNLOAD_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf": "application/pdf",
+    "txt": "text/plain; charset=utf-8",
+    "json": "application/json",
+    "package": "application/zip",
+}
+
+
+@router.post("/documents/{document_id}/export/download", dependencies=[Depends(require_token)])
+def export_download(document_id: str, payload: ExportIn, db: Session = Depends(get_db)):
+    """Gera o arquivo na pasta de dados do aplicativo e devolve o download."""
+    item = db.get(Document, document_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail={"code": "not_found", "message": "Documento não encontrado."})
+    from cpmh_backend.services.exporting import export_document
+
+    settings = get_settings()
+    folder = settings.data_dir / "exports"
+    folder.mkdir(parents=True, exist_ok=True)
+    formats = list(payload.formats)
+    if len(formats) > 1 and "package" not in formats:
+        formats.append("package")
+    try:
+        files = export_document(
+            db,
+            item,
+            settings,
+            formats=formats,
+            mode=payload.mode,
+            output_name=payload.output_name,
+            output_dir=str(folder),
+            collision="version",
+            translate_mode=payload.translate_mode,
+        )
+    except AppError as exc:
+        raise_app(exc)
+    chosen = next((row for row in files if row["format"] == "package"), None) if len(formats) > 1 else files[0]
+    if chosen is None:
+        chosen = files[0]
+    audit(db, "export", "Documento baixado.", {"id": item.id, "formats": formats})
+    return FileResponse(chosen["path"], filename=chosen["name"], media_type=_DOWNLOAD_TYPES.get(chosen["format"], "application/octet-stream"))
 
 
 @router.get("/documents/{document_id}/exports", dependencies=[Depends(require_token)])

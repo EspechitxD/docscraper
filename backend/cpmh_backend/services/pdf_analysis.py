@@ -10,11 +10,20 @@ from cpmh_backend.intelligence import (
     assess_formula,
     blocks_from_pdf_chars,
     classify_blocks,
+    demote_open_headings,
     detect_text_table,
     guess_image_category,
+    lines_from_words,
     mark_repeated_chrome,
+    reading_order,
 )
+from cpmh_backend.layout import is_multicolumn
 from cpmh_backend.services.ocr import recognize
+
+# O OCR lê a página em cerca de 300 DPI. A 144 DPI (escala 2) o Tesseract erra letras
+# pequenas: "immeitely", "nates", "Parentheses". O texto digital não precisa disso.
+OCR_RENDER_SCALE = 300 / 72
+DISPLAY_RENDER_SCALE = 2
 
 
 def _center_inside(block_bbox: tuple[float, float, float, float], table_bbox: tuple[float, float, float, float]) -> bool:
@@ -161,8 +170,10 @@ def _grid_from_ruled_box(words: list, box: dict) -> list[list[str]] | None:
     for row in buckets:
         cells = []
         for words_in_cell in row:
-            ordered = sorted(words_in_cell, key=lambda item: (round(item.bbox[1], 3), item.bbox[0]))
-            cells.append(" ".join(item.text for item in ordered).strip())
+            # Agrupa por linha com tolerância de base e ordena cada linha da esquerda para a direita.
+            # Ordenar por (y arredondado, x) embaralhava a segunda linha com a primeira.
+            lines = lines_from_words(words_in_cell)
+            cells.append(" ".join(" ".join(item.text for item in line) for line in lines).strip())
         grid.append(cells)
     filled = sum(1 for row in grid for cell in row if cell)
     if filled < 4:
@@ -170,8 +181,14 @@ def _grid_from_ruled_box(words: list, box: dict) -> list[list[str]] | None:
     return grid
 
 
-def _table_from_rules_or_text(words: list, ruled: list[dict], *, from_text_layer: bool) -> dict | None:
+def _table_from_rules_or_text(
+    words: list, ruled: list[dict], *, from_text_layer: bool, multicolumn: bool = False
+) -> dict | None:
     if not ruled:
+        # Duas colunas de texto corrido têm um vão em toda linha e parecem uma tabela de duas
+        # colunas. Sem linhas desenhadas, a página em colunas não gera tabela.
+        if multicolumn:
+            return None
         return detect_text_table(words, from_text_layer=from_text_layer)
     diagrams = _diagram_crops_boxes(ruled)
     candidates = []
@@ -261,30 +278,41 @@ def _analyze_page(page, index: int, languages: list[str]) -> dict:
             )
     finally:
         text_page.close()
-    rendered = page.render(scale=2)
-    image = rendered.to_pil().convert("RGB")
-    rendered.close()
     text = "".join(char["ch"] for char in chars).strip()
     source = "pdf_text"
     notes: dict = {}
     if len(text) < 8:
+        rendered = page.render(scale=OCR_RENDER_SCALE)
+        image = rendered.to_pil().convert("RGB")
+        rendered.close()
         blocks, image, notes = recognize(image, languages)
         source = "ocr"
     else:
+        rendered = page.render(scale=DISPLAY_RENDER_SCALE)
+        image = rendered.to_pil().convert("RGB")
+        rendered.close()
         blocks = blocks_from_pdf_chars(chars, page_width, page_height)
     embedded = _embedded_images(page, page_width, page_height)
     words = [word for block in blocks for word in block.words]
     ruled = detect_ruled_tables(image)
-    table = _table_from_rules_or_text(words, ruled, from_text_layer=source == "pdf_text")
+    table = _table_from_rules_or_text(
+        words,
+        ruled,
+        from_text_layer=source == "pdf_text",
+        multicolumn=is_multicolumn([block.bbox for block in blocks]),
+    )
     diagram_boxes = _diagram_crops_boxes(ruled)
+    # Tabela deduzida só do alinhamento do OCR não é confiável. Ela não pode apagar o texto da página.
+    removes_text = bool(table and table.get("rows") and (table.get("reliable") or table.get("source") == "lines+text"))
     kept: list[Block] = []
     for block in blocks:
-        if table and table.get("rows") and _center_inside(block.bbox, table["bbox"]):
+        if removes_text and _center_inside(block.bbox, table["bbox"]):
             continue
         if any(_center_inside(block.bbox, box) for box in diagram_boxes):
             continue
         kept.append(block)
     classify_blocks(kept)
+    demote_open_headings(reading_order(kept))
     formulas = []
     for block in kept:
         if block.category in {"formula", "equation"}:

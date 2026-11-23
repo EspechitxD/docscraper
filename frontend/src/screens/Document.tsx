@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, apiBlob, hasDesktopBridge, isApiError, type ApiError } from "../api";
+import { api, apiBlob, apiDownload, hasDesktopBridge, isApiError, type ApiError } from "../api";
 import { Button, Field, Modal, Notice, Progress } from "../components/ui";
-import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatWhen, isActiveState, nextStep, stateLabel } from "../labels";
+import { ACCESS_MECHANISMS, ACCESS_METHODS, ACCESS_PROVIDERS, ACCESS_STATES, CATEGORIES, TRANSLATION_MODES, canonicalTranslationMode, categoryLabel, formatDuration, formatWhen, isActiveState, nextStep, stateLabel } from "../labels";
 import type { DocumentItem, ElementItem, FormulaItem, ImageItem, Job, PageItem, Region, TableItem } from "../types";
 
 type Tab = "process" | "review" | "structure" | "export" | "browser";
@@ -123,10 +123,18 @@ export function DocumentScreen() {
             <span>Origem</span><strong className="mono">{doc.url || doc.origin}</strong>
             <span>Domínio</span><strong>{doc.domain || "—"}</strong>
             <span>Tipo</span><strong>{doc.source_kind || "desconhecido"}</strong>
-            <span>Inclusão</span><strong>{formatWhen(doc.added_at)} (Brasília)</strong>
+            <span>Inclusão</span><strong>{formatWhen(doc.added_at)}</strong>
             <span>Conclusão</span><strong>{formatWhen(doc.completed_at)}</strong>
+            <span>Páginas</span><strong>{doc.page_count ?? 0}</strong>
             <span>Exportado</span><strong>{doc.exported_formats.join(", ") || "ainda não"}</strong>
           </div>
+          {(doc.page_count ?? 0) > 0 ? (
+            <div className="row">
+              <Button kind="secondary" onClick={() => setTab("review")}>Ver as {doc.page_count} folhas</Button>
+            </div>
+          ) : (
+            <Notice kind="warn">Neste computador ainda não há folhas. Clique em Recapturar e espere a barra terminar. As imagens ficam na aba Revisão.</Notice>
+          )}
           <Field label="Tradução nesta tarefa">
             <select className="select" value={translateMode} onChange={(event) => setTranslateMode(event.target.value)}>
               {TRANSLATION_MODES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
@@ -161,7 +169,8 @@ export function DocumentScreen() {
               <h2>Etapa atual: {stateLabel(latest.stage)}</h2>
               <Progress value={latest.progress} />
               <p>{latest.attempts} tentativas. Início {formatWhen(latest.started_at)}. Fim {formatWhen(latest.finished_at)}.</p>
-              {!latest.started_at && <p>Ainda não há tempo decorrido. A estimativa só aparece quando houver páginas já medidas.</p>}
+              {latest.started_at && latest.finished_at && <p>Duração {formatDuration(latest.started_at, latest.finished_at)}.</p>}
+              {!latest.started_at && <p>O horário de início aparece quando a extração começa.</p>}
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Quando</th><th>Etapa</th><th>Estado</th><th>Mensagem</th></tr></thead>
@@ -694,13 +703,15 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
   const [translateMode, setTranslateMode] = useState("none");
   const [name, setName] = useState(document.title.replace(/\s+/g, "_") || "documento");
   const [directory, setDirectory] = useState("");
+  const directoryTouched = useRef(false);
   const [error, setError] = useState("");
   const [files, setFiles] = useState<{ name: string; path: string; format: string; size: number }[]>([]);
   const [collision, setCollision] = useState<ApiError | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api<{ values: { default_output_dir?: string; default_export_mode?: string; default_format?: string } }>("/preferences").then((payload) => {
-      if (payload.values.default_output_dir) setDirectory(payload.values.default_output_dir);
+      if (!directoryTouched.current && payload.values.default_output_dir) setDirectory(payload.values.default_output_dir);
       if (payload.values.default_export_mode) setMode(payload.values.default_export_mode);
       if (payload.values.default_format) setFormats([payload.values.default_format]);
     }).catch(() => undefined);
@@ -716,7 +727,44 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
   async function chooseDir() {
     if (!window.cpmh) return;
     const picked = await window.cpmh.pickDirectory();
-    if (picked) setDirectory(picked);
+    if (picked) {
+      directoryTouched.current = true;
+      setDirectory(picked);
+    }
+  }
+
+  async function downloadNow() {
+    setError("");
+    setBusy(true);
+    try {
+      const downloaded = await apiDownload(`/documents/${document.id}/export/download`, {
+        method: "POST",
+        body: JSON.stringify({
+          formats,
+          mode,
+          output_name: name,
+          translate_mode: translateMode,
+        }),
+      });
+      const url = URL.createObjectURL(downloaded.blob);
+      const anchor = window.document.createElement("a");
+      anchor.href = url;
+      anchor.download = downloaded.filename || "documento.docx";
+      anchor.rel = "noopener";
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      try {
+        await onDone();
+      } catch {
+        // O arquivo já foi entregue. Uma falha ao atualizar a lista não desfaz o download.
+      }
+    } catch (cause) {
+      setError(isApiError(cause) ? cause.message : cause instanceof Error && cause.message ? cause.message : "O download falhou.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function exportNow(choice: string | null) {
@@ -775,12 +823,15 @@ function ExportPane({ document, onDone }: { document: DocumentItem; onDone: () =
       </div>
       <Field label="Nome do arquivo"><input className="field" value={name} onChange={(event) => setName(event.target.value)} /></Field>
       <div className="row">
-        <input className="field grow" value={directory} placeholder="Pasta de destino" onChange={(event) => setDirectory(event.target.value)} />
+        <input className="field grow" value={directory} placeholder="Em branco salva em Documentos/CPMH" onChange={(event) => { directoryTouched.current = true; setDirectory(event.target.value); }} />
         {hasDesktopBridge() && <Button kind="secondary" onClick={() => void chooseDir()}>Escolher pasta</Button>}
       </div>
       {!hasDesktopBridge() && <p className="lede">No aplicativo desktop, a pasta é escolhida pelo seletor do sistema. Aqui informe o caminho absoluto.</p>}
-      <p>Revisão: {summary}. A exportação reutiliza OCR e capturas já gravados.</p>
-      <Button onClick={() => void exportNow(null)}>Exportar</Button>
+      <p>Revisão: {summary}. Baixar grava o arquivo na pasta de downloads, sem escolher destino. Folhas invertidas são relidas nessa hora.</p>
+      <div className="row">
+        <Button onClick={() => void downloadNow()} disabled={busy}>{busy ? "Preparando o arquivo…" : "Baixar arquivo"}</Button>
+        <Button kind="secondary" onClick={() => void exportNow(null)} disabled={busy}>Salvar numa pasta</Button>
+      </div>
       <div className="table-wrap">
         <table>
           <thead><tr><th>Arquivo</th><th>Formato</th><th>Caminho</th></tr></thead>

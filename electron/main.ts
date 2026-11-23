@@ -300,9 +300,12 @@ function registerIpc(): void {
     if (!mainWindow) {
       return null;
     }
+    const destination = path.join(app.getPath("documents"), "CPMH");
+    fs.mkdirSync(destination, { recursive: true });
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openDirectory", "createDirectory"],
       title: "Escolher pasta de destino",
+      defaultPath: destination,
     });
     return result.canceled ? null : result.filePaths[0];
   });

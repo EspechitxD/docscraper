@@ -1,0 +1,16 @@
+Atualização de qualidade do texto (22/11/2026)
+
+Como aplicar: copie as pastas deste zip por cima do seu repositório docscraper, mantendo os caminhos.
+Só estes 11 arquivos mudam; nada do que você adicionou (lab/, chromium_automation.zip, electron/dist,
+test_lab_extension.py) foi removido.
+
+Único arquivo do laboratório tocado: backend/cpmh_backend/services/lab_extension.py. A mudança está só
+no ramo normal (sem modo laboratório) de open_capture_context: device_scale_factor passa de 1 para
+CPMH_CAPTURE_SCALE (padrão 2). O ramo do modo laboratório não foi alterado.
+
+Depois de copiar: feche o npm run dev, abra de novo e refaça a captura (as páginas antigas do documento
+foram guardadas na resolução baixa e duplicadas; crie o documento de novo).
+
+Variáveis opcionais:
+  CPMH_CAPTURE_SCALE=3        capturas mais nítidas (1 a 4; mais lento e mais pesado)
+  CPMH_TESSDATA_DIR=C:\tessdata_best   usa outro modelo do Tesseract
